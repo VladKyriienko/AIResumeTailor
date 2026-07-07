@@ -1,0 +1,19 @@
+---
+import HeroSection from '../components/HeroSection.vue';
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout>
+  <main>
+    <HeroSection client:load />
+  </main>
+</Layout>
+
+<style>
+  main {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+</style>
