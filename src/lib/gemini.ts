@@ -119,7 +119,7 @@ async function loadPromptTemplate(): Promise<string> {
     return await readFile(promptPath, 'utf-8');
   } catch {
     throw new GeminiConfigError(
-      `Prompt not found. Set GEMINI_PROMPT in env or create ${promptPath} (copy prompts/tailor-resume.prompt.example).`,
+      `Prompt not found at ${promptPath}. Set GEMINI_PROMPT in env or create the prompt file.`,
     );
   }
 }

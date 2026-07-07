@@ -1,10 +1,12 @@
 import { defineConfig, envField } from 'astro/config';
-import node from '@astrojs/node';
+import vercel from '@astrojs/vercel';
 import vue from '@astrojs/vue';
 import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
-  adapter: node({ mode: 'standalone' }),
+  adapter: vercel({
+    maxDuration: 60,
+  }),
   integrations: [vue()],
   env: {
     schema: {
