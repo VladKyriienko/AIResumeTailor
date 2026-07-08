@@ -5,8 +5,6 @@ import {
   SchemaType,
   type ResponseSchema,
 } from '@google/generative-ai';
-import { getSecret } from 'astro:env/server';
-import { loadEnv } from 'vite';
 import type { TailorResult } from '@/types';
 import bundledPrompt from '../../prompts/tailor-resume.prompt?raw';
 
@@ -45,18 +43,8 @@ export class GeminiApiError extends Error {
 }
 
 function readEnv(name: string): string | undefined {
-  try {
-    const fromAstro = getSecret(name);
-    if (fromAstro) return fromAstro;
-  } catch {
-    // Astro env may be unavailable during tooling.
-  }
-
-  const mode = process.env.NODE_ENV ?? 'development';
-  const fromFile = loadEnv(mode, process.cwd(), '')[name];
-  if (fromFile) return fromFile;
-
-  return process.env[name];
+  const value = process.env[name];
+  return value === '' ? undefined : value;
 }
 
 function getGeminiApiKey(): string {
