@@ -1,6 +1,7 @@
 import mammoth from 'mammoth';
 import type { jsPDF } from 'jspdf';
 import { extractText, getDocumentProxy } from 'unpdf';
+import { isJobPostingUrl } from '@/lib/job-description';
 
 const MIN_RESUME_TEXT_LENGTH = 50;
 
@@ -94,7 +95,7 @@ const SECTION_KEYWORDS =
 
 const PAGE = {
   format: 'a4' as const,
-  marginX: 18,
+  marginX: 14,
   marginTop: 16,
   marginBottom: 14,
 };
@@ -445,9 +446,102 @@ function renderBlock(
   }
 }
 
+function slugifyFilePart(value: string): string {
+  return value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+}
+
+export function extractCandidateName(
+  content: string,
+): string | null {
+  const blocks = parseResumeContent(content);
+  const nameBlock = blocks.find(
+    (block) => block.type === 'name',
+  );
+
+  if (!nameBlock?.text.trim()) return null;
+
+  return nameBlock.text.trim();
+}
+
+export function extractCompanyName(
+  jobDescription: string,
+): string | null {
+  const text = jobDescription.trim();
+  if (!text) return null;
+
+  const patterns = [
+    /(?:company|organisation|organization)\s*[:\-]\s*([^\n|,]+)/i,
+    /(?:at|@)\s+([A-Z][\w&.' -]{1,50}?)(?:\s*(?:\||-)|$|\n)/m,
+    /(?:join|joining)\s+([A-Z][\w&.' -]{1,50}?)(?:\s*(?:\||-)|$|\n)/im,
+    /^([A-Z][\w&.' -]{1,50}?)\s+(?:is hiring|is looking|hiring)/im,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const company = match?.[1]?.trim();
+    if (company && company.length >= 2) {
+      return company.replace(/\s+/g, ' ');
+    }
+  }
+
+  try {
+    if (isJobPostingUrl(text)) {
+      const host = new URL(text).hostname.replace(
+        /^www\./,
+        '',
+      );
+      const jobBoards = [
+        'linkedin',
+        'indeed',
+        'glassdoor',
+        'djinni',
+        'dou',
+        'work',
+        'reed',
+        'totaljobs',
+        'greenhouse',
+        'lever',
+        'workday',
+        'smartrecruiters',
+      ];
+      const brand = host.split('.')[0]?.toLowerCase();
+      if (brand && !jobBoards.includes(brand)) {
+        return (
+          brand.charAt(0).toUpperCase() + brand.slice(1)
+        );
+      }
+    }
+  } catch {
+    // Ignore invalid URLs.
+  }
+
+  return null;
+}
+
+export function buildResumePdfFileName(
+  content: string,
+  jobDescription = '',
+): string {
+  const candidate =
+    extractCandidateName(content) ?? 'Candidate';
+  const company =
+    extractCompanyName(jobDescription) ?? 'Company';
+
+  const candidateSlug =
+    slugifyFilePart(candidate) || 'Candidate';
+  const companySlug = slugifyFilePart(company) || 'Company';
+
+  return `${candidateSlug}-${companySlug}-Resume.pdf`;
+}
+
 export async function downloadResumePdf(
   content: string,
-  fileName = 'tailored-resume.pdf',
+  jobDescription = '',
 ): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const doc = new jsPDF({
@@ -457,6 +551,10 @@ export async function downloadResumePdf(
 
   const blocks = parseResumeContent(content);
   const state: RenderState = { y: PAGE.marginTop };
+  const fileName = buildResumePdfFileName(
+    content,
+    jobDescription,
+  );
 
   if (blocks.length === 0) {
     setTypeStyle(doc, 'paragraph');

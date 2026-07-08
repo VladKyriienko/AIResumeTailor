@@ -153,10 +153,9 @@ function handleReset(): void {
 async function handleDownloadPdf(): Promise<void> {
   if (!tailorResult.value) return;
 
-  const date = new Date().toISOString().slice(0, 10);
   await downloadResumePdf(
     tailorResult.value.tailoredResume,
-    `tailored-resume-${date}.pdf`,
+    jobDescription.value.trim(),
   );
 }
 </script>
