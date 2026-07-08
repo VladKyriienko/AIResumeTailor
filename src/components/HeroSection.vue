@@ -79,10 +79,34 @@ async function submitTailorRequest(
     body: formData,
   });
 
-  const payload = (await response.json()) as {
-    data?: TailorResult;
-    error?: string;
-  };
+  const rawBody = await response.text();
+  let payload: { data?: TailorResult; error?: string };
+
+  if (!rawBody.trim()) {
+    if (
+      response.status === 504 ||
+      response.status === 502
+    ) {
+      throw new Error(
+        'Server timed out. Gemini can take 20+ seconds — check your Vercel plan limits and try again.',
+      );
+    }
+
+    throw new Error(
+      `Server returned an empty response (${response.status}).`,
+    );
+  }
+
+  try {
+    payload = JSON.parse(rawBody) as {
+      data?: TailorResult;
+      error?: string;
+    };
+  } catch {
+    throw new Error(
+      'Server returned an invalid response. Try again later.',
+    );
+  }
 
   if (!response.ok) {
     throw new Error(
@@ -126,11 +150,11 @@ function handleReset(): void {
   tailorResult.value = null;
 }
 
-function handleDownloadPdf(): void {
+async function handleDownloadPdf(): Promise<void> {
   if (!tailorResult.value) return;
 
   const date = new Date().toISOString().slice(0, 10);
-  downloadResumePdf(
+  await downloadResumePdf(
     tailorResult.value.tailoredResume,
     `tailored-resume-${date}.pdf`,
   );

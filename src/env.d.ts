@@ -6,3 +6,8 @@ declare module '*.vue' {
   const component: DefineComponent<object, object, unknown>;
   export default component;
 }
+
+declare module '*?raw' {
+  const content: string;
+  export default content;
+}

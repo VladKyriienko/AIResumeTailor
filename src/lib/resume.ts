@@ -1,5 +1,5 @@
 import mammoth from 'mammoth';
-import { jsPDF } from 'jspdf';
+import type { jsPDF } from 'jspdf';
 import { extractText, getDocumentProxy } from 'unpdf';
 
 const MIN_RESUME_TEXT_LENGTH = 50;
@@ -445,10 +445,11 @@ function renderBlock(
   }
 }
 
-export function downloadResumePdf(
+export async function downloadResumePdf(
   content: string,
   fileName = 'tailored-resume.pdf',
-): void {
+): Promise<void> {
+  const { jsPDF } = await import('jspdf');
   const doc = new jsPDF({
     unit: 'mm',
     format: PAGE.format,

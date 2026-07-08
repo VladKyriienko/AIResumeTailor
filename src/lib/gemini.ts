@@ -8,6 +8,7 @@ import {
 import { getSecret } from 'astro:env/server';
 import { loadEnv } from 'vite';
 import type { TailorResult } from '@/types';
+import bundledPrompt from '../../prompts/tailor-resume.prompt?raw';
 
 const PLACEHOLDER_API_KEY = 'your_gemini_api_key_here';
 const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
@@ -118,6 +119,10 @@ async function loadPromptTemplate(): Promise<string> {
   try {
     return await readFile(promptPath, 'utf-8');
   } catch {
+    if (bundledPrompt.trim()) {
+      return bundledPrompt;
+    }
+
     throw new GeminiConfigError(
       `Prompt not found at ${promptPath}. Set GEMINI_PROMPT in env or create the prompt file.`,
     );

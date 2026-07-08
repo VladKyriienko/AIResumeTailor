@@ -6,6 +6,7 @@ import { fileURLToPath, URL } from 'node:url';
 export default defineConfig({
   adapter: vercel({
     maxDuration: 60,
+    includeFiles: ['prompts/tailor-resume.prompt'],
   }),
   integrations: [vue()],
   env: {
