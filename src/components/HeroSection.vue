@@ -15,6 +15,11 @@ const resumeFile = ref<TailorRequest['resumeFile']>(null);
 const isSubmitting = ref(false);
 const errorMessage = ref<string | null>(null);
 const tailorResult = ref<TailorResult | null>(null);
+const editableResume = ref('');
+
+const canDownloadPdf = computed(() =>
+  Boolean(editableResume.value.trim()),
+);
 
 const canSubmit = computed(
   () =>
@@ -49,6 +54,7 @@ function handleFileChange(event: Event): void {
 
   errorMessage.value = null;
   tailorResult.value = null;
+  editableResume.value = '';
 
   if (!file) {
     resumeFile.value = null;
@@ -136,12 +142,15 @@ async function handleSubmit(): Promise<void> {
   isSubmitting.value = true;
   errorMessage.value = null;
   tailorResult.value = null;
+  editableResume.value = '';
 
   try {
-    tailorResult.value = await submitTailorRequest(
+    const result = await submitTailorRequest(
       resumeFile.value,
       jobDescription.value.trim(),
     );
+    tailorResult.value = result;
+    editableResume.value = result.tailoredResume;
   } catch (error) {
     errorMessage.value =
       error instanceof Error
@@ -157,13 +166,14 @@ function handleReset(): void {
   resumeFile.value = null;
   errorMessage.value = null;
   tailorResult.value = null;
+  editableResume.value = '';
 }
 
 async function handleDownloadPdf(): Promise<void> {
-  if (!tailorResult.value) return;
+  if (!canDownloadPdf.value) return;
 
   await downloadResumePdf(
-    tailorResult.value.tailoredResume,
+    editableResume.value,
     jobDescription.value.trim(),
   );
 }
@@ -237,18 +247,31 @@ async function handleDownloadPdf(): Promise<void> {
 
     <section v-if="tailorResult" class="results">
       <div class="results-header">
-        <h2>Tailored resume</h2>
+        <div>
+          <h2>Tailored resume</h2>
+          <p class="edit-hint">
+            Edit the text below before downloading the PDF.
+          </p>
+        </div>
         <button
           type="button"
           class="secondary"
+          :disabled="!canDownloadPdf"
           @click="handleDownloadPdf"
         >
           Download PDF
         </button>
       </div>
-      <pre class="resume-output">{{
-        tailorResult.tailoredResume
-      }}</pre>
+      <label class="visually-hidden" for="resume-preview"
+        >Edit tailored resume</label
+      >
+      <textarea
+        id="resume-preview"
+        v-model="editableResume"
+        class="resume-output"
+        rows="28"
+        spellcheck="true"
+      />
     </section>
   </section>
 </template>
@@ -426,15 +449,44 @@ button:disabled {
   font-size: 1.5rem;
 }
 
-.resume-output {
+.edit-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.875rem;
+  color: #a8b3cc;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+textarea.resume-output {
   margin: 0;
+  min-height: 28rem;
   padding: 1rem;
   border: 1px solid #2a3550;
   border-radius: 0.75rem;
   background: #121a2e;
   color: #e8edf7;
-  font: inherit;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.9375rem;
+  line-height: 1.55;
   white-space: pre-wrap;
-  overflow-x: auto;
+  overflow: auto;
+  resize: vertical;
+}
+
+textarea.resume-output:focus {
+  outline: 2px solid #4f7cff;
+  outline-offset: 2px;
 }
 </style>
