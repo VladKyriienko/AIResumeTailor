@@ -88,7 +88,7 @@ async function submitTailorRequest(
       response.status === 502
     ) {
       throw new Error(
-        'Server timed out. Gemini can take 20+ seconds — check your Vercel plan limits and try again.',
+        'Server timed out. Gemini took too long — set GEMINI_MODEL=gemini-2.0-flash in Vercel env and try again.',
       );
     }
 
@@ -103,8 +103,17 @@ async function submitTailorRequest(
       error?: string;
     };
   } catch {
+    if (
+      response.status === 504 ||
+      /timed?\s*out|gateway/i.test(rawBody)
+    ) {
+      throw new Error(
+        'Server timed out after 60s. Set GEMINI_MODEL=gemini-2.0-flash in Vercel for faster responses.',
+      );
+    }
+
     throw new Error(
-      'Server returned an invalid response. Try again later.',
+      `Server returned an invalid response (${response.status}). Try again later.`,
     );
   }
 

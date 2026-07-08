@@ -63,7 +63,7 @@ Open [http://localhost:4321](http://localhost:4321).
 3. Vercel detects Astro + Bun (`bun.lock`). Build command: `bun run build`.
 4. Add **Environment Variables** (Production + Preview):
    - `GEMINI_API_KEY` — required
-   - `GEMINI_MODEL` — optional (default `gemini-3.5-flash`)
+   - `GEMINI_MODEL` — optional (default `gemini-2.0-flash`; avoid `gemini-3.5-flash` on Hobby/Pro 60s limit)
    - `GEMINI_PROMPT` — optional; overrides `prompts/tailor-resume.prompt`
 5. Deploy.
 

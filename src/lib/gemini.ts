@@ -9,10 +9,13 @@ import type { TailorResult } from '@/types';
 import bundledPrompt from '../../prompts/tailor-resume.prompt?raw';
 
 const PLACEHOLDER_API_KEY = 'your_gemini_api_key_here';
-const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
+const DEFAULT_GEMINI_MODEL = 'gemini-2.0-flash';
 const DEFAULT_PROMPT_FILE = 'prompts/tailor-resume.prompt';
 const JOB_DESCRIPTION_PLACEHOLDER = '{{JOB_DESCRIPTION}}';
 const RESUME_TEXT_PLACEHOLDER = '{{RESUME_TEXT}}';
+const GEMINI_REQUEST_TIMEOUT_MS = 55_000;
+const MAX_RESUME_CHARS = 20_000;
+const MAX_JOB_DESCRIPTION_CHARS = 12_000;
 
 const TAILOR_RESULT_SCHEMA: ResponseSchema = {
   type: SchemaType.OBJECT,
@@ -98,19 +101,27 @@ function fillPromptTemplate(
     .replaceAll(RESUME_TEXT_PLACEHOLDER, resumeText);
 }
 
+function truncateText(
+  value: string,
+  maxChars: number,
+): string {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}\n\n[Truncated for length]`;
+}
+
 async function loadPromptTemplate(): Promise<string> {
   const fromEnv = readEnv('GEMINI_PROMPT')?.trim();
   if (fromEnv) return fromEnv;
+
+  if (bundledPrompt.trim()) {
+    return bundledPrompt;
+  }
 
   const promptPath = resolvePromptPath();
 
   try {
     return await readFile(promptPath, 'utf-8');
   } catch {
-    if (bundledPrompt.trim()) {
-      return bundledPrompt;
-    }
-
     throw new GeminiConfigError(
       `Prompt not found at ${promptPath}. Set GEMINI_PROMPT in env or create the prompt file.`,
     );
@@ -158,15 +169,26 @@ function toGeminiApiError(error: unknown): GeminiApiError {
         retrySeconds
           ? `Try again in about ${retrySeconds} seconds.`
           : 'Try again later.',
-        'You can also set GEMINI_MODEL=gemini-2.0-flash in .env or enable billing in Google AI Studio.',
+        'Try GEMINI_MODEL=gemini-2.0-flash or enable billing in Google AI Studio.',
       ].join(' '),
       429,
     );
   }
 
+  if (
+    message.includes('timeout') ||
+    message.includes('Timeout') ||
+    message.includes('aborted')
+  ) {
+    return new GeminiApiError(
+      'Gemini request timed out. Try GEMINI_MODEL=gemini-2.0-flash for faster responses.',
+      504,
+    );
+  }
+
   if (message.includes('unexpected model name format')) {
     return new GeminiApiError(
-      'Invalid GEMINI_MODEL in .env. Use an API model id like gemini-3.5-flash.',
+      'Invalid GEMINI_MODEL. Use an API model id like gemini-2.0-flash.',
       400,
     );
   }
@@ -188,15 +210,28 @@ function getGeminiClientModel() {
   const apiKey = getGeminiApiKey();
   const modelName = getGeminiModel();
   const client = new GoogleGenerativeAI(apiKey);
+  const isGemini3 = /gemini-3/i.test(modelName);
 
-  return client.getGenerativeModel({
-    model: modelName,
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema: TAILOR_RESULT_SCHEMA,
-      temperature: 0.4,
+  return client.getGenerativeModel(
+    {
+      model: modelName,
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: TAILOR_RESULT_SCHEMA,
+        maxOutputTokens: 8192,
+        ...(isGemini3
+          ? {
+              thinkingConfig: {
+                thinkingLevel: 'minimal',
+              },
+            }
+          : { temperature: 0.4 }),
+      },
     },
-  });
+    {
+      timeout: GEMINI_REQUEST_TIMEOUT_MS,
+    },
+  );
 }
 
 function stripJsonFence(text: string): string {
@@ -293,8 +328,8 @@ export async function tailorResumeWithGemini(
 ): Promise<TailorResult> {
   const model = getGeminiClientModel();
   const prompt = await loadTailorPrompt(
-    jobDescription,
-    resumeText,
+    truncateText(jobDescription, MAX_JOB_DESCRIPTION_CHARS),
+    truncateText(resumeText, MAX_RESUME_CHARS),
   );
 
   let rawText: string;
