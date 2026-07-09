@@ -1,15 +1,36 @@
+import * as cheerio from 'cheerio';
+import { isJobPostingUrl } from '@/lib/job-url';
+import {
+  assertSafeFetchUrl,
+  SSRF_BLOCKED_MESSAGE,
+  UrlValidationError,
+} from '@/lib/url-validation';
+
 const FETCH_TIMEOUT_MS = 15_000;
 const MIN_JOB_DESCRIPTION_LENGTH = 100;
 const MAX_JOB_DESCRIPTION_LENGTH = 50_000;
+const MAX_REDIRECTS = 5;
 
-const HTML_ENTITY_MAP: Record<string, string> = {
-  '&nbsp;': ' ',
-  '&amp;': '&',
-  '&lt;': '<',
-  '&gt;': '>',
-  '&quot;': '"',
-  '&#39;': "'",
-};
+const REMOVABLE_SELECTORS = [
+  'script',
+  'style',
+  'noscript',
+  'nav',
+  'footer',
+  'header',
+  'aside',
+  'iframe',
+  '[role="banner"]',
+  '[role="navigation"]',
+  '[role="contentinfo"]',
+  '[aria-label*="cookie" i]',
+  '[class*="cookie" i]',
+  '[id*="cookie" i]',
+  '[class*="consent" i]',
+  '[class*="advert" i]',
+  '[class*="ad-" i]',
+  '[id*="advert" i]',
+].join(', ');
 
 export class JobDescriptionError extends Error {
   constructor(message: string) {
@@ -18,45 +39,16 @@ export class JobDescriptionError extends Error {
   }
 }
 
-export function isJobPostingUrl(input: string): boolean {
-  const trimmed = input.trim();
+export { isJobPostingUrl } from '@/lib/job-url';
 
-  if (!trimmed || trimmed.includes('\n')) {
-    return false;
-  }
-
-  try {
-    const url = new URL(trimmed);
-    return (
-      url.protocol === 'http:' || url.protocol === 'https:'
-    );
-  } catch {
-    return false;
-  }
+function trimJobDescription(text: string): string {
+  if (text.length <= MAX_JOB_DESCRIPTION_LENGTH) return text;
+  return `${text.slice(0, MAX_JOB_DESCRIPTION_LENGTH).trim()}...`;
 }
 
-function decodeHtmlEntities(text: string): string {
-  return text.replace(
-    /&(nbsp|amp|lt|gt|quot|#39);/g,
-    (match) => HTML_ENTITY_MAP[match] ?? match,
-  );
-}
-
-function htmlToText(html: string): string {
-  const withoutScripts = html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ');
-
-  const withLineBreaks = withoutScripts
-    .replace(/<\/(p|div|li|h[1-6]|br|tr)>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n');
-
-  const plainText = withLineBreaks
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\r\n/g, '\n');
-
-  return decodeHtmlEntities(plainText)
+function normalizeExtractedText(text: string): string {
+  return text
+    .replace(/\r\n/g, '\n')
     .split('\n')
     .map((line) => line.replace(/\s+/g, ' ').trim())
     .filter(Boolean)
@@ -64,32 +56,78 @@ function htmlToText(html: string): string {
     .trim();
 }
 
-function trimJobDescription(text: string): string {
-  if (text.length <= MAX_JOB_DESCRIPTION_LENGTH)
-    return text;
-  return `${text.slice(0, MAX_JOB_DESCRIPTION_LENGTH).trim()}...`;
+export function extractTextFromHtml(html: string): string {
+  const $ = cheerio.load(html);
+  $(REMOVABLE_SELECTORS).remove();
+
+  const parts: string[] = [];
+
+  const title = $('title').first().text().trim();
+  if (title) parts.push(title);
+
+  $('h1, h2, h3, h4, h5, h6, p, li').each((_, element) => {
+    const text = $(element).text().replace(/\s+/g, ' ').trim();
+    if (text) parts.push(text);
+  });
+
+  if (parts.length === 0) {
+    const bodyText = $('body').text();
+    if (bodyText.trim()) parts.push(bodyText);
+  }
+
+  return normalizeExtractedText(parts.join('\n'));
 }
 
-async function fetchJobDescriptionFromUrl(
-  url: string,
-): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    FETCH_TIMEOUT_MS,
-  );
+async function safeFetchJobPage(initialUrl: string): Promise<Response> {
+  let currentUrl = initialUrl;
 
+  for (
+    let redirectCount = 0;
+    redirectCount <= MAX_REDIRECTS;
+    redirectCount += 1
+  ) {
+    await assertSafeFetchUrl(currentUrl);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(currentUrl, {
+        signal: controller.signal,
+        redirect: 'manual',
+        headers: {
+          Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
+          'User-Agent':
+            'AIResumeTailor/1.0 (+https://github.com/local/ai-resume-tailor)',
+        },
+      });
+
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location) {
+          throw new JobDescriptionError(
+            'Could not load the job page. Paste the description text instead.',
+          );
+        }
+
+        currentUrl = new URL(location, currentUrl).href;
+        continue;
+      }
+
+      return response;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw new JobDescriptionError(
+    'Could not load the job page. Paste the description text instead.',
+  );
+}
+
+async function fetchJobDescriptionFromUrl(url: string): Promise<string> {
   try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        Accept:
-          'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
-        'User-Agent':
-          'AIResumeTailor/1.0 (+https://github.com/local/ai-resume-tailor)',
-      },
-      redirect: 'follow',
-    });
+    const response = await safeFetchJobPage(url);
 
     if (!response.ok) {
       throw new JobDescriptionError(
@@ -97,11 +135,10 @@ async function fetchJobDescriptionFromUrl(
       );
     }
 
-    const contentType =
-      response.headers.get('content-type') ?? '';
+    const contentType = response.headers.get('content-type') ?? '';
 
     if (contentType.includes('text/plain')) {
-      const text = (await response.text()).trim();
+      const text = normalizeExtractedText(await response.text());
 
       if (text.length < MIN_JOB_DESCRIPTION_LENGTH) {
         throw new JobDescriptionError(
@@ -113,7 +150,7 @@ async function fetchJobDescriptionFromUrl(
     }
 
     const html = await response.text();
-    const text = htmlToText(html);
+    const text = extractTextFromHtml(html);
 
     if (text.length < MIN_JOB_DESCRIPTION_LENGTH) {
       throw new JobDescriptionError(
@@ -125,10 +162,11 @@ async function fetchJobDescriptionFromUrl(
   } catch (error) {
     if (error instanceof JobDescriptionError) throw error;
 
-    if (
-      error instanceof Error &&
-      error.name === 'AbortError'
-    ) {
+    if (error instanceof UrlValidationError) {
+      throw new JobDescriptionError(SSRF_BLOCKED_MESSAGE);
+    }
+
+    if (error instanceof Error && error.name === 'AbortError') {
       throw new JobDescriptionError(
         'Loading the job page timed out. Paste the description text instead.',
       );
@@ -137,20 +175,14 @@ async function fetchJobDescriptionFromUrl(
     throw new JobDescriptionError(
       'Failed to load the job page. Paste the description text instead.',
     );
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
-export async function resolveJobDescription(
-  input: string,
-): Promise<string> {
+export async function resolveJobDescription(input: string): Promise<string> {
   const trimmed = input.trim();
 
   if (!trimmed) {
-    throw new JobDescriptionError(
-      'Job description is required.',
-    );
+    throw new JobDescriptionError('Job description is required.');
   }
 
   if (isJobPostingUrl(trimmed)) {

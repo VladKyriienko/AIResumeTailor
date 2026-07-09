@@ -10,6 +10,11 @@
     "build": "astro build",
     "preview": "astro preview",
     "check": "astro check",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "setup:env": "test -f .env && echo '.env already exists — skipped' || (cp .env.example .env && echo 'Created .env — add your GEMINI_API_KEY')",
     "setup:prompt": "test -f prompts/tailor-resume.prompt && echo 'prompts/tailor-resume.prompt exists' || echo 'Missing prompts/tailor-resume.prompt — create it or set GEMINI_PROMPT in .env'",
     "setup": "bun run setup:env && bun run setup:prompt",
@@ -20,14 +25,25 @@
     "@astrojs/vue": "^7.0.1",
     "@google/generative-ai": "^0.24.1",
     "astro": "^7.0.6",
+    "cheerio": "^1.1.2",
     "jspdf": "^4.2.1",
     "mammoth": "^1.12.0",
     "unpdf": "^1.6.2",
-    "vue": "^3.5.39"
+    "vue": "^3.5.39",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.9",
+    "@eslint/js": "^9.39.2",
     "@types/node": "^26.1.0",
-    "typescript": "^6.0.3"
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-astro": "^1.5.0",
+    "eslint-plugin-vue": "^10.6.2",
+    "globals": "^17.7.0",
+    "prettier": "^3.6.2",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.46.2",
+    "vitest": "^3.2.4"
   }
 }

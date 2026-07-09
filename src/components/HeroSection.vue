@@ -1,24 +1,29 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { isJobPostingUrl } from '@/lib/job-description';
+import { isJobPostingUrl } from '@/lib/job-url';
 import { downloadResumePdf } from '@/lib/resume';
 import {
   ACCEPTED_RESUME_EXTENSIONS,
   ACCEPTED_RESUME_TYPES,
+  MAX_RESUME_FILE_SIZE_BYTES,
+  MAX_RESUME_FILE_SIZE_LABEL,
   type TailorRequest,
   type TailorResult,
 } from '@/types';
 
-const jobDescription =
-  ref<TailorRequest['jobDescription']>('');
+const jobDescription = ref<TailorRequest['jobDescription']>('');
 const resumeFile = ref<TailorRequest['resumeFile']>(null);
 const isSubmitting = ref(false);
+const isDownloading = ref(false);
 const errorMessage = ref<string | null>(null);
 const tailorResult = ref<TailorResult | null>(null);
 const editableResume = ref('');
 
-const canDownloadPdf = computed(() =>
-  Boolean(editableResume.value.trim()),
+const canDownloadPdf = computed(
+  () =>
+    Boolean(editableResume.value.trim()) &&
+    !isSubmitting.value &&
+    !isDownloading.value,
 );
 
 const canSubmit = computed(
@@ -28,15 +33,10 @@ const canSubmit = computed(
     !isSubmitting.value,
 );
 
-const isVacancyUrl = computed(() =>
-  isJobPostingUrl(jobDescription.value),
-);
+const isVacancyUrl = computed(() => isJobPostingUrl(jobDescription.value));
 
 function isAcceptedResumeFile(file: File): boolean {
-  const extension = file.name
-    .split('.')
-    .pop()
-    ?.toLowerCase();
+  const extension = file.name.split('.').pop()?.toLowerCase();
   const acceptedExtensions = ['pdf', 'docx', 'txt'];
 
   if (extension && acceptedExtensions.includes(extension)) {
@@ -46,6 +46,49 @@ function isAcceptedResumeFile(file: File): boolean {
   return ACCEPTED_RESUME_TYPES.includes(
     file.type as (typeof ACCEPTED_RESUME_TYPES)[number],
   );
+}
+
+function formatUserFacingError(message: string): string {
+  const lower = message.toLowerCase();
+
+  if (
+    lower.includes('quota') ||
+    lower.includes('429') ||
+    lower.includes('rate limit')
+  ) {
+    return 'Gemini quota exceeded. Try again later or switch to a lighter model such as gemini-2.0-flash.';
+  }
+
+  if (
+    lower.includes('timed out') ||
+    lower.includes('timeout') ||
+    lower.includes('504')
+  ) {
+    return 'The request timed out. Try again with a shorter job description or use gemini-2.0-flash for faster responses.';
+  }
+
+  if (
+    lower.includes('invalid resume file') ||
+    lower.includes('unsupported file') ||
+    lower.includes('too large') ||
+    lower.includes('8 mb')
+  ) {
+    return message;
+  }
+
+  if (
+    lower.includes('job description') ||
+    lower.includes('paste the') ||
+    lower.includes('cannot be loaded')
+  ) {
+    return message;
+  }
+
+  if (lower.includes('gemini_api_key') || lower.includes('api key')) {
+    return message;
+  }
+
+  return message;
 }
 
 function handleFileChange(event: Event): void {
@@ -69,6 +112,13 @@ function handleFileChange(event: Event): void {
     return;
   }
 
+  if (file.size > MAX_RESUME_FILE_SIZE_BYTES) {
+    input.value = '';
+    resumeFile.value = null;
+    errorMessage.value = `File is too large. Maximum size is ${MAX_RESUME_FILE_SIZE_LABEL}.`;
+    return;
+  }
+
   resumeFile.value = file;
 }
 
@@ -89,18 +139,13 @@ async function submitTailorRequest(
   let payload: { data?: TailorResult; error?: string };
 
   if (!rawBody.trim()) {
-    if (
-      response.status === 504 ||
-      response.status === 502
-    ) {
+    if (response.status === 504 || response.status === 502) {
       throw new Error(
-        'Server timed out. Gemini took too long — set GEMINI_MODEL=gemini-2.0-flash in Vercel env and try again.',
+        'The request timed out. Try again with a shorter job description or use gemini-2.0-flash for faster responses.',
       );
     }
 
-    throw new Error(
-      `Server returned an empty response (${response.status}).`,
-    );
+    throw new Error('Failed to tailor the resume. Please try again later.');
   }
 
   try {
@@ -109,28 +154,23 @@ async function submitTailorRequest(
       error?: string;
     };
   } catch {
-    if (
-      response.status === 504 ||
-      /timed?\s*out|gateway/i.test(rawBody)
-    ) {
+    if (response.status === 504 || /timed?\s*out|gateway/i.test(rawBody)) {
       throw new Error(
-        'Server timed out after 60s. Set GEMINI_MODEL=gemini-2.0-flash in Vercel for faster responses.',
+        'The request timed out. Try again with a shorter job description or use gemini-2.0-flash for faster responses.',
       );
     }
 
-    throw new Error(
-      `Server returned an invalid response (${response.status}). Try again later.`,
-    );
+    throw new Error('Failed to tailor the resume. Please try again later.');
   }
 
   if (!response.ok) {
     throw new Error(
-      payload.error ?? 'Request failed. Please try again.',
+      payload.error ?? 'Failed to tailor the resume. Please try again later.',
     );
   }
 
   if (!payload.data) {
-    throw new Error('Unexpected response from the server.');
+    throw new Error('Failed to tailor the resume. Please try again later.');
   }
 
   return payload.data;
@@ -152,10 +192,11 @@ async function handleSubmit(): Promise<void> {
     tailorResult.value = result;
     editableResume.value = result.tailoredResume;
   } catch (error) {
-    errorMessage.value =
+    const message =
       error instanceof Error
         ? error.message
-        : 'Something went wrong. Please try again.';
+        : 'Failed to tailor the resume. Please try again later.';
+    errorMessage.value = formatUserFacingError(message);
   } finally {
     isSubmitting.value = false;
   }
@@ -172,10 +213,13 @@ function handleReset(): void {
 async function handleDownloadPdf(): Promise<void> {
   if (!canDownloadPdf.value) return;
 
-  await downloadResumePdf(
-    editableResume.value,
-    jobDescription.value.trim(),
-  );
+  isDownloading.value = true;
+
+  try {
+    await downloadResumePdf(editableResume.value, jobDescription.value.trim());
+  } finally {
+    isDownloading.value = false;
+  }
 }
 </script>
 
@@ -184,8 +228,8 @@ async function handleDownloadPdf(): Promise<void> {
     <p class="eyebrow">AI-powered resume tailoring</p>
     <h1>Match your resume to any job in minutes</h1>
     <p class="subtitle">
-      Upload your resume, paste a job description or vacancy
-      URL, and get an upgraded version tailored with Gemini.
+      Upload your resume, paste a job description or vacancy URL, and get an
+      upgraded version tailored with Gemini.
     </p>
 
     <form class="form" @submit.prevent="handleSubmit">
@@ -198,9 +242,10 @@ async function handleDownloadPdf(): Promise<void> {
         :disabled="isSubmitting"
         @change="handleFileChange"
       />
-      <p v-if="resumeFile" class="file-name">
-        Selected: {{ resumeFile.name }}
+      <p class="file-hint">
+        PDF, DOCX, or TXT up to {{ MAX_RESUME_FILE_SIZE_LABEL }}.
       </p>
+      <p v-if="resumeFile" class="file-name">Selected: {{ resumeFile.name }}</p>
 
       <label class="label" for="job-description"
         >Job description or vacancy URL</label
@@ -213,8 +258,8 @@ async function handleDownloadPdf(): Promise<void> {
         :disabled="isSubmitting"
       />
       <p v-if="isVacancyUrl" class="hint">
-        Vacancy URL detected — we will fetch and extract the
-        job description on submit.
+        Vacancy URL detected — we will fetch and extract the job description on
+        submit.
       </p>
 
       <p v-if="errorMessage" class="error" role="alert">
@@ -222,22 +267,15 @@ async function handleDownloadPdf(): Promise<void> {
       </p>
 
       <div class="actions">
-        <button type="submit" :disabled="!canSubmit">
-          <span
-            v-if="isSubmitting"
-            class="button-spinner"
-            aria-hidden="true"
-          />
-          {{
-            isSubmitting
-              ? 'Tailoring with Gemini...'
-              : 'Tailor my resume'
-          }}
+        <button type="submit" :disabled="!canSubmit" :aria-busy="isSubmitting">
+          <span v-if="isSubmitting" class="button-spinner" aria-hidden="true" />
+          {{ isSubmitting ? 'Tailoring with Gemini...' : 'Tailor my resume' }}
         </button>
         <button
           v-if="tailorResult"
           type="button"
           class="secondary"
+          :disabled="isSubmitting"
           @click="handleReset"
         >
           Start over
@@ -257,9 +295,15 @@ async function handleDownloadPdf(): Promise<void> {
           type="button"
           class="secondary"
           :disabled="!canDownloadPdf"
+          :aria-busy="isDownloading"
           @click="handleDownloadPdf"
         >
-          Download PDF
+          <span
+            v-if="isDownloading"
+            class="button-spinner"
+            aria-hidden="true"
+          />
+          {{ isDownloading ? 'Preparing PDF...' : 'Download PDF' }}
         </button>
       </div>
       <label class="visually-hidden" for="resume-preview"
@@ -271,6 +315,7 @@ async function handleDownloadPdf(): Promise<void> {
         class="resume-output"
         rows="28"
         spellcheck="true"
+        :disabled="isSubmitting"
       />
     </section>
   </section>
@@ -334,6 +379,11 @@ textarea:focus {
   outline-offset: 2px;
 }
 
+textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .file-input {
   width: 100%;
   padding: 0.75rem;
@@ -362,6 +412,7 @@ textarea:focus {
   cursor: pointer;
 }
 
+.file-hint,
 .file-name {
   margin: 0;
   font-size: 0.875rem;
@@ -476,8 +527,8 @@ textarea.resume-output {
   background: #121a2e;
   color: #e8edf7;
   font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    'Liberation Mono', 'Courier New', monospace;
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
   font-size: 0.9375rem;
   line-height: 1.55;
   white-space: pre-wrap;

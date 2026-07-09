@@ -4,30 +4,26 @@ import {
   GeminiConfigError,
   tailorResumeWithGemini,
 } from '@/lib/gemini';
+import { ResumeFileValidationError } from '@/lib/file-validation';
 import {
   JobDescriptionError,
   resolveJobDescription,
 } from '@/lib/job-description';
-import {
-  extractResumeText,
-  ResumeExtractionError,
-} from '@/lib/resume';
+import { extractResumeText, ResumeExtractionError } from '@/lib/resume';
 
 export const prerender = false;
 
-function jsonResponse(
-  body: Record<string, unknown>,
-  status = 200,
-): Response {
+const GENERIC_ERROR_MESSAGE =
+  'Failed to tailor the resume. Please try again later.';
+
+function jsonResponse(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
 }
 
-function toUploadFile(
-  value: FormDataEntryValue | null,
-): File | null {
+function toUploadFile(value: FormDataEntryValue | null): File | null {
   if (!(value instanceof Blob)) return null;
 
   if (value instanceof File) return value;
@@ -46,38 +42,22 @@ function toUploadFile(
   });
 }
 
-async function handleTailorResumeRequest(
-  request: Request,
-): Promise<Response> {
+async function handleTailorResumeRequest(request: Request): Promise<Response> {
   const formData = await request.formData();
   const resume = toUploadFile(formData.get('resume'));
   const jobDescription = formData.get('jobDescription');
 
   if (!resume) {
-    return jsonResponse(
-      { error: 'Resume file is required.' },
-      400,
-    );
+    return jsonResponse({ error: 'Resume file is required.' }, 400);
   }
 
-  if (
-    typeof jobDescription !== 'string' ||
-    !jobDescription.trim()
-  ) {
-    return jsonResponse(
-      { error: 'Job description is required.' },
-      400,
-    );
+  if (typeof jobDescription !== 'string' || !jobDescription.trim()) {
+    return jsonResponse({ error: 'Job description is required.' }, 400);
   }
 
   const resumeText = await extractResumeText(resume);
-  const jobText = await resolveJobDescription(
-    jobDescription.trim(),
-  );
-  const result = await tailorResumeWithGemini(
-    resumeText,
-    jobText,
-  );
+  const jobText = await resolveJobDescription(jobDescription.trim());
+  const result = await tailorResumeWithGemini(resumeText, jobText);
 
   return jsonResponse({ data: result });
 }
@@ -91,14 +71,12 @@ export const POST: APIRoute = async ({ request }) => {
     }
 
     if (error instanceof GeminiApiError) {
-      return jsonResponse(
-        { error: error.message },
-        error.status,
-      );
+      return jsonResponse({ error: error.message }, error.status);
     }
 
     if (
       error instanceof ResumeExtractionError ||
+      error instanceof ResumeFileValidationError ||
       error instanceof JobDescriptionError
     ) {
       return jsonResponse({ error: error.message }, 400);
@@ -106,11 +84,6 @@ export const POST: APIRoute = async ({ request }) => {
 
     console.error('Tailor resume failed:', error);
 
-    const message =
-      error instanceof Error
-        ? error.message
-        : 'Failed to tailor the resume.';
-
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse({ error: GENERIC_ERROR_MESSAGE }, 500);
   }
 };

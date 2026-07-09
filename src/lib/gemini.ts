@@ -6,6 +6,8 @@ import {
   type ResponseSchema,
 } from '@google/generative-ai';
 import type { TailorResult } from '@/types';
+import { readServerEnv } from '@/lib/env';
+import { tailorResultSchema } from '@/lib/schemas';
 import bundledPrompt from '../../prompts/tailor-resume.prompt?raw';
 
 const PLACEHOLDER_API_KEY = 'your_gemini_api_key_here';
@@ -46,8 +48,7 @@ export class GeminiApiError extends Error {
 }
 
 function readEnv(name: string): string | undefined {
-  const value = process.env[name];
-  return value === '' ? undefined : value;
+  return readServerEnv(name);
 }
 
 function getGeminiApiKey(): string {
@@ -62,9 +63,7 @@ function getGeminiApiKey(): string {
   return apiKey;
 }
 
-function getGeminiModel(
-  fallback = DEFAULT_GEMINI_MODEL,
-): string {
+function getGeminiModel(fallback = DEFAULT_GEMINI_MODEL): string {
   return readEnv('GEMINI_MODEL') ?? fallback;
 }
 
@@ -101,10 +100,7 @@ function fillPromptTemplate(
     .replaceAll(RESUME_TEXT_PLACEHOLDER, resumeText);
 }
 
-function truncateText(
-  value: string,
-  maxChars: number,
-): string {
+function truncateText(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, maxChars)}\n\n[Truncated for length]`;
 }
@@ -134,25 +130,18 @@ async function loadTailorPrompt(
 ): Promise<string> {
   const template = await loadPromptTemplate();
   validatePromptTemplate(template);
-  return fillPromptTemplate(
-    template,
-    jobDescription,
-    resumeText,
-  );
+  return fillPromptTemplate(template, jobDescription, resumeText);
 }
 
 function getRetrySeconds(message: string): number | null {
   const match = message.match(/retry in ([\d.]+)s/i);
-  return match
-    ? Math.ceil(Number.parseFloat(match[1]))
-    : null;
+  return match ? Math.ceil(Number.parseFloat(match[1])) : null;
 }
 
 function toGeminiApiError(error: unknown): GeminiApiError {
   if (error instanceof GeminiApiError) return error;
 
-  const message =
-    error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
   const status =
     error &&
     typeof error === 'object' &&
@@ -236,9 +225,7 @@ function getGeminiClientModel() {
 
 function stripJsonFence(text: string): string {
   const trimmed = text.trim();
-  const match = trimmed.match(
-    /^```(?:json)?\s*([\s\S]*?)\s*```$/i,
-  );
+  const match = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
   return match?.[1]?.trim() ?? trimmed;
 }
 
@@ -264,10 +251,7 @@ function unescapeJsonString(value: string): string {
         case 't':
           return '\t';
         default: {
-          const codePoint = Number.parseInt(
-            sequence.slice(1),
-            16,
-          );
+          const codePoint = Number.parseInt(sequence.slice(1), 16);
           return String.fromCharCode(codePoint);
         }
       }
@@ -275,9 +259,7 @@ function unescapeJsonString(value: string): string {
   );
 }
 
-function extractTailoredResumeLenient(
-  rawText: string,
-): string | null {
+function extractTailoredResumeLenient(rawText: string): string | null {
   const cleaned = stripJsonFence(rawText);
   const match = cleaned.match(/"tailoredResume"\s*:\s*"/);
   if (!match?.index) return null;
@@ -289,37 +271,38 @@ function extractTailoredResumeLenient(
   const afterValue = cleaned.slice(closingQuote + 1).trim();
   if (!afterValue.startsWith('}')) return null;
 
-  return unescapeJsonString(
-    cleaned.slice(contentStart, closingQuote),
-  );
+  return unescapeJsonString(cleaned.slice(contentStart, closingQuote));
 }
 
-function parseTailorResult(rawText: string): TailorResult {
+export function parseTailorResult(rawText: string): TailorResult {
   const cleaned = stripJsonFence(rawText);
 
-  let tailoredResume: string | undefined;
+  let parsed: unknown;
 
   try {
-    const parsed = JSON.parse(
-      cleaned,
-    ) as Partial<TailorResult>;
-    tailoredResume = parsed.tailoredResume;
+    parsed = JSON.parse(cleaned);
   } catch {
-    tailoredResume =
-      extractTailoredResumeLenient(cleaned) ?? undefined;
+    const lenient = extractTailoredResumeLenient(cleaned);
+    if (!lenient) {
+      throw new GeminiApiError(
+        'Gemini returned an invalid response. Try again.',
+        502,
+      );
+    }
+
+    return { tailoredResume: lenient.trim() };
   }
 
-  if (
-    typeof tailoredResume !== 'string' ||
-    !tailoredResume.trim()
-  ) {
+  const result = tailorResultSchema.safeParse(parsed);
+
+  if (!result.success) {
     throw new GeminiApiError(
       'Gemini returned an invalid response. Try again.',
       502,
     );
   }
 
-  return { tailoredResume: tailoredResume.trim() };
+  return result.data;
 }
 
 export async function tailorResumeWithGemini(
@@ -343,7 +326,10 @@ export async function tailorResumeWithGemini(
   }
 
   if (!rawText) {
-    throw new Error('Gemini returned an empty response.');
+    throw new GeminiApiError(
+      'Gemini returned an empty response. Try again.',
+      502,
+    );
   }
 
   try {

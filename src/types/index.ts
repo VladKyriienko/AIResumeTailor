@@ -19,3 +19,6 @@ export const ACCEPTED_RESUME_TYPES = [
 ] as const;
 
 export const ACCEPTED_RESUME_EXTENSIONS = '.pdf,.docx,.txt';
+
+export const MAX_RESUME_FILE_SIZE_BYTES = 8 * 1024 * 1024;
+export const MAX_RESUME_FILE_SIZE_LABEL = '8 MB';

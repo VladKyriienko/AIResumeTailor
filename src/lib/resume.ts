@@ -1,7 +1,8 @@
 import mammoth from 'mammoth';
 import type { jsPDF } from 'jspdf';
 import { extractText, getDocumentProxy } from 'unpdf';
-import { isJobPostingUrl } from '@/lib/job-description';
+import { validateResumeFile } from '@/lib/file-validation';
+import { isJobPostingUrl } from '@/lib/job-url';
 
 const MIN_RESUME_TEXT_LENGTH = 50;
 
@@ -16,36 +17,28 @@ function getFileExtension(fileName: string): string {
   return fileName.split('.').pop()?.toLowerCase() ?? '';
 }
 
-async function extractPdfText(
-  buffer: Buffer,
-): Promise<string> {
-  const pdf = await getDocumentProxy(
-    new Uint8Array(buffer),
-  );
+export { MAX_RESUME_FILE_SIZE_BYTES } from '@/lib/file-validation';
+
+async function extractPdfText(buffer: Buffer): Promise<string> {
+  const pdf = await getDocumentProxy(new Uint8Array(buffer));
   const { text } = await extractText(pdf, {
     mergePages: true,
   });
   return text.trim();
 }
 
-async function extractDocxText(
-  buffer: Buffer,
-): Promise<string> {
+async function extractDocxText(buffer: Buffer): Promise<string> {
   const result = await mammoth.extractRawText({ buffer });
   return result.value.trim();
 }
 
-async function extractPlainText(
-  buffer: Buffer,
-): Promise<string> {
+async function extractPlainText(buffer: Buffer): Promise<string> {
   return buffer.toString('utf-8').trim();
 }
 
-export async function extractResumeText(
-  file: File,
-): Promise<string> {
+export async function extractResumeText(file: File): Promise<string> {
+  const buffer = await validateResumeFile(file);
   const extension = getFileExtension(file.name);
-  const buffer = Buffer.from(await file.arrayBuffer());
 
   let text = '';
 
@@ -179,10 +172,7 @@ function isBulletLine(line: string): boolean {
 function isContactLine(line: string): boolean {
   return (
     line.includes('|') &&
-    (/@/.test(line) ||
-      /linkedin|github|portfolio|phone|\+?\d{7,}/i.test(
-        line,
-      ))
+    (/@/.test(line) || /linkedin|github|portfolio|phone|\+?\d{7,}/i.test(line))
   );
 }
 
@@ -190,9 +180,7 @@ function isSubsectionLine(line: string): boolean {
   return line.split('|').length >= 3;
 }
 
-function parseResumeContent(
-  content: string,
-): ResumeBlock[] {
+function parseResumeContent(content: string): ResumeBlock[] {
   const lines = content
     .split('\n')
     .map((line) => line.trim())
@@ -294,30 +282,18 @@ function getPageSize(doc: jsPDF) {
   };
 }
 
-function ensureSpace(
-  doc: jsPDF,
-  state: RenderState,
-  height: number,
-): void {
+function ensureSpace(doc: jsPDF, state: RenderState, height: number): void {
   const { height: pageHeight } = getPageSize(doc);
-  if (state.y + height <= pageHeight - PAGE.marginBottom)
-    return;
+  if (state.y + height <= pageHeight - PAGE.marginBottom) return;
   doc.addPage();
   state.y = PAGE.marginTop;
 }
 
-function setTypeStyle(
-  doc: jsPDF,
-  type: keyof typeof TYPE,
-): void {
+function setTypeStyle(doc: jsPDF, type: keyof typeof TYPE): void {
   const config = TYPE[type];
   doc.setFont('helvetica', config.style);
   doc.setFontSize(config.size);
-  doc.setTextColor(
-    config.color[0],
-    config.color[1],
-    config.color[2],
-  );
+  doc.setTextColor(config.color[0], config.color[1], config.color[2]);
 }
 
 function writeLines(
@@ -374,29 +350,17 @@ function renderBlock(
       state.y += SPACING.beforeSection;
       setTypeStyle(doc, 'section');
       ensureSpace(doc, state, TYPE.section.size);
-      doc.text(
-        block.text.toUpperCase(),
-        PAGE.marginX,
-        state.y,
-      );
+      doc.text(block.text.toUpperCase(), PAGE.marginX, state.y);
       state.y += SPACING.afterSectionTitle;
       ensureSpace(doc, state, SPACING.afterSectionLine);
       doc.setDrawColor(0, 0, 0);
       doc.setLineWidth(SPACING.sectionLineWidth);
-      doc.line(
-        PAGE.marginX,
-        state.y,
-        PAGE.marginX + contentWidth,
-        state.y,
-      );
+      doc.line(PAGE.marginX, state.y, PAGE.marginX + contentWidth, state.y);
       state.y += SPACING.afterSectionLine;
       return;
 
     case 'subsection':
-      if (
-        previousBlock &&
-        previousBlock.type !== 'section'
-      ) {
+      if (previousBlock && previousBlock.type !== 'section') {
         state.y += SPACING.beforeSubsection;
       }
       setTypeStyle(doc, 'subsection');
@@ -414,19 +378,12 @@ function renderBlock(
       setTypeStyle(doc, 'bullet');
       const bulletX = PAGE.marginX + SPACING.bulletIndent;
       const textWidth = contentWidth - SPACING.bulletIndent;
-      const lines = doc.splitTextToSize(
-        block.text,
-        textWidth,
-      );
+      const lines = doc.splitTextToSize(block.text, textWidth);
 
       for (const line of lines) {
         ensureSpace(doc, state, SPACING.bulletGap);
         if (line === lines[0]) {
-          doc.text(
-            '•',
-            PAGE.marginX + SPACING.bulletMarkerX,
-            state.y,
-          );
+          doc.text('•', PAGE.marginX + SPACING.bulletMarkerX, state.y);
         }
         doc.text(line, bulletX, state.y);
         state.y += SPACING.bulletGap;
@@ -455,27 +412,21 @@ function slugifyFilePart(value: string): string {
     .slice(0, 60);
 }
 
-export function extractCandidateName(
-  content: string,
-): string | null {
+export function extractCandidateName(content: string): string | null {
   const blocks = parseResumeContent(content);
-  const nameBlock = blocks.find(
-    (block) => block.type === 'name',
-  );
+  const nameBlock = blocks.find((block) => block.type === 'name');
 
   if (!nameBlock?.text.trim()) return null;
 
   return nameBlock.text.trim();
 }
 
-export function extractCompanyName(
-  jobDescription: string,
-): string | null {
+export function extractCompanyName(jobDescription: string): string | null {
   const text = jobDescription.trim();
   if (!text) return null;
 
   const patterns = [
-    /(?:company|organisation|organization)\s*[:\-]\s*([^\n|,]+)/i,
+    /(?:company|organisation|organization)\s*[:-]\s*([^\n|,]+)/i,
     /(?:at|@)\s+([A-Z][\w&.' -]{1,50}?)(?:\s*(?:\||-)|$|\n)/m,
     /(?:join|joining)\s+([A-Z][\w&.' -]{1,50}?)(?:\s*(?:\||-)|$|\n)/im,
     /^([A-Z][\w&.' -]{1,50}?)\s+(?:is hiring|is looking|hiring)/im,
@@ -491,10 +442,7 @@ export function extractCompanyName(
 
   try {
     if (isJobPostingUrl(text)) {
-      const host = new URL(text).hostname.replace(
-        /^www\./,
-        '',
-      );
+      const host = new URL(text).hostname.replace(/^www\./, '');
       const jobBoards = [
         'linkedin',
         'indeed',
@@ -511,9 +459,7 @@ export function extractCompanyName(
       ];
       const brand = host.split('.')[0]?.toLowerCase();
       if (brand && !jobBoards.includes(brand)) {
-        return (
-          brand.charAt(0).toUpperCase() + brand.slice(1)
-        );
+        return brand.charAt(0).toUpperCase() + brand.slice(1);
       }
     }
   } catch {
@@ -527,13 +473,10 @@ export function buildResumePdfFileName(
   content: string,
   jobDescription = '',
 ): string {
-  const candidate =
-    extractCandidateName(content) ?? 'Candidate';
-  const company =
-    extractCompanyName(jobDescription) ?? 'Company';
+  const candidate = extractCandidateName(content) ?? 'Candidate';
+  const company = extractCompanyName(jobDescription) ?? 'Company';
 
-  const candidateSlug =
-    slugifyFilePart(candidate) || 'Candidate';
+  const candidateSlug = slugifyFilePart(candidate) || 'Candidate';
   const companySlug = slugifyFilePart(company) || 'Company';
 
   return `${candidateSlug}-${companySlug}-Resume.pdf`;
@@ -551,20 +494,14 @@ export async function downloadResumePdf(
 
   const blocks = parseResumeContent(content);
   const state: RenderState = { y: PAGE.marginTop };
-  const fileName = buildResumePdfFileName(
-    content,
-    jobDescription,
-  );
+  const fileName = buildResumePdfFileName(content, jobDescription);
 
   if (blocks.length === 0) {
     setTypeStyle(doc, 'paragraph');
     writeLines(
       doc,
       state,
-      doc.splitTextToSize(
-        content,
-        getPageSize(doc).width - PAGE.marginX * 2,
-      ),
+      doc.splitTextToSize(content, getPageSize(doc).width - PAGE.marginX * 2),
       PAGE.marginX,
       SPACING.line,
     );
