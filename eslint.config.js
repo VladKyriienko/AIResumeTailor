@@ -7,14 +7,7 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: [
-      'dist/',
-      '.astro/',
-      '.vercel/',
-      'node_modules/',
-      '**/*.test.ts',
-      'tests/',
-    ],
+    ignores: ['dist/', '.astro/', '.vercel/', 'node_modules/'],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
@@ -28,6 +21,18 @@ export default tseslint.config(
         'error',
         { argsIgnorePattern: '^_' },
       ],
+    },
+  },
+  {
+    files: ['src/**/*.test.ts', 'tests/**/*.ts'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-non-null-assertion': 'off',
     },
   },
   {

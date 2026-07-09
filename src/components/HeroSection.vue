@@ -56,7 +56,7 @@ function formatUserFacingError(message: string): string {
     lower.includes('429') ||
     lower.includes('rate limit')
   ) {
-    return 'Gemini quota exceeded. Try again later or switch to a lighter model such as gemini-2.0-flash.';
+    return 'Gemini is temporarily unavailable. Wait a moment and try again, or set GEMINI_MODEL=gemini-3.1-flash-lite in .env.';
   }
 
   if (

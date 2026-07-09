@@ -11,7 +11,17 @@ import { tailorResultSchema } from '@/lib/schemas';
 import bundledPrompt from '../../prompts/tailor-resume.prompt?raw';
 
 const PLACEHOLDER_API_KEY = 'your_gemini_api_key_here';
-const DEFAULT_GEMINI_MODEL = 'gemini-2.0-flash';
+const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite';
+
+/** Models tried in order when quota or availability errors occur. */
+export const GEMINI_MODEL_ROTATION = [
+  'gemini-3.5-flash',
+  'gemini-3.1-flash-lite',
+  'gemini-3-flash-preview',
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+] as const;
 const DEFAULT_PROMPT_FILE = 'prompts/tailor-resume.prompt';
 const JOB_DESCRIPTION_PLACEHOLDER = '{{JOB_DESCRIPTION}}';
 const RESUME_TEXT_PLACEHOLDER = '{{RESUME_TEXT}}';
@@ -60,11 +70,109 @@ function getGeminiApiKey(): string {
     );
   }
 
+  if (!apiKey.startsWith('AIza')) {
+    console.warn(
+      'GEMINI_API_KEY does not look like a Google AI Studio key (expected AIza... prefix). Create one at https://aistudio.google.com/apikey',
+    );
+  }
+
   return apiKey;
 }
 
 function getGeminiModel(fallback = DEFAULT_GEMINI_MODEL): string {
   return readEnv('GEMINI_MODEL') ?? fallback;
+}
+
+export function getGeminiModelRotationChain(
+  primaryModel = getGeminiModel(),
+): string[] {
+  const rotation = [...GEMINI_MODEL_ROTATION];
+  const startIndex = rotation.indexOf(
+    primaryModel as (typeof GEMINI_MODEL_ROTATION)[number],
+  );
+
+  if (startIndex === -1) {
+    return [primaryModel, ...rotation];
+  }
+
+  return [...rotation.slice(startIndex), ...rotation.slice(0, startIndex)];
+}
+
+/** @deprecated Use getGeminiModelRotationChain */
+export function getGeminiModelFallbackChain(
+  primaryModel = getGeminiModel(),
+): string[] {
+  return getGeminiModelRotationChain(primaryModel);
+}
+
+export function getNextGeminiModelInRotation(
+  currentModel: string,
+  attemptedModels: readonly string[] = [],
+): string | null {
+  const chain = getGeminiModelRotationChain(currentModel);
+  const attempted = new Set(attemptedModels);
+
+  for (const model of chain) {
+    if (!attempted.has(model)) {
+      return model;
+    }
+  }
+
+  return null;
+}
+
+function isRetryableModelError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const status = getErrorStatus(error);
+
+  return (
+    status === 404 ||
+    status === 429 ||
+    status === 503 ||
+    message.includes('quota') ||
+    message.includes('overloaded') ||
+    message.includes('high demand') ||
+    message.includes('not found')
+  );
+}
+
+function getErrorStatus(error: unknown): number {
+  if (
+    error &&
+    typeof error === 'object' &&
+    'status' in error &&
+    typeof error.status === 'number'
+  ) {
+    return error.status;
+  }
+
+  return 500;
+}
+
+function buildAllModelsFailedError(lastError: unknown): GeminiApiError {
+  const status = getErrorStatus(lastError);
+  const message =
+    lastError instanceof Error ? lastError.message : String(lastError);
+
+  if (status === 429 || message.includes('quota')) {
+    return new GeminiApiError(
+      [
+        'Gemini rate limit reached for the models we tried.',
+        'Wait a minute and try again, or set GEMINI_MODEL=gemini-3.1-flash-lite in .env.',
+        'Check usage at https://ai.dev/rate-limit',
+      ].join(' '),
+      429,
+    );
+  }
+
+  if (status === 404 || message.includes('not found')) {
+    return new GeminiApiError(
+      'The configured Gemini model is not available for your API key. Set GEMINI_MODEL=gemini-3.1-flash-lite in .env and restart the dev server.',
+      400,
+    );
+  }
+
+  return toGeminiApiError(lastError);
 }
 
 function resolvePromptPath(): string {
@@ -157,10 +265,17 @@ function toGeminiApiError(error: unknown): GeminiApiError {
         'Gemini API quota exceeded for your current plan.',
         retrySeconds
           ? `Try again in about ${retrySeconds} seconds.`
-          : 'Try again later.',
-        'Try GEMINI_MODEL=gemini-2.0-flash or enable billing in Google AI Studio.',
+          : 'Try again in a minute.',
+        'Check usage at https://ai.dev/rate-limit or enable billing in Google AI Studio.',
       ].join(' '),
       429,
+    );
+  }
+
+  if (status === 503 || message.includes('overloaded')) {
+    return new GeminiApiError(
+      'Gemini is temporarily overloaded. Wait a moment and try again.',
+      503,
     );
   }
 
@@ -195,9 +310,8 @@ function toGeminiApiError(error: unknown): GeminiApiError {
   );
 }
 
-function getGeminiClientModel() {
+function getGeminiClientModel(modelName: string) {
   const apiKey = getGeminiApiKey();
-  const modelName = getGeminiModel();
   const client = new GoogleGenerativeAI(apiKey);
   const isGemini3 = /gemini-3/i.test(modelName);
 
@@ -305,11 +419,43 @@ export function parseTailorResult(rawText: string): TailorResult {
   return result.data;
 }
 
+async function generateTailoredResumeText(prompt: string): Promise<string> {
+  const models = getGeminiModelRotationChain();
+  let lastError: unknown;
+
+  for (const modelName of models) {
+    try {
+      const model = getGeminiClientModel(modelName);
+      const result = await model.generateContent(prompt);
+      const rawText = result.response.text();
+
+      if (rawText) {
+        return rawText;
+      }
+
+      lastError = new Error('Gemini returned an empty response.');
+    } catch (error) {
+      if (error instanceof GeminiConfigError) throw error;
+
+      if (isRetryableModelError(error)) {
+        lastError = error;
+        console.warn(
+          `Gemini model "${modelName}" unavailable, trying fallback...`,
+        );
+        continue;
+      }
+
+      throw toGeminiApiError(error);
+    }
+  }
+
+  throw buildAllModelsFailedError(lastError);
+}
+
 export async function tailorResumeWithGemini(
   resumeText: string,
   jobDescription: string,
 ): Promise<TailorResult> {
-  const model = getGeminiClientModel();
   const prompt = await loadTailorPrompt(
     truncateText(jobDescription, MAX_JOB_DESCRIPTION_CHARS),
     truncateText(resumeText, MAX_RESUME_CHARS),
@@ -318,10 +464,10 @@ export async function tailorResumeWithGemini(
   let rawText: string;
 
   try {
-    const result = await model.generateContent(prompt);
-    rawText = result.response.text();
+    rawText = await generateTailoredResumeText(prompt);
   } catch (error) {
     if (error instanceof GeminiConfigError) throw error;
+    if (error instanceof GeminiApiError) throw error;
     throw toGeminiApiError(error);
   }
 

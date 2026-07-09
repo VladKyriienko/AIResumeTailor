@@ -10,6 +10,7 @@
     "build": "astro build",
     "preview": "astro preview",
     "check": "astro check",
+    "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -30,7 +31,8 @@
     "mammoth": "^1.12.0",
     "unpdf": "^1.6.2",
     "vue": "^3.5.39",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "fflate": "^0.8.2"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.9",

@@ -10,6 +10,7 @@ import {
   resolveJobDescription,
 } from '@/lib/job-description';
 import { extractResumeText, ResumeExtractionError } from '@/lib/resume';
+import { tailorRequestSchema } from '@/lib/schemas';
 
 export const prerender = false;
 
@@ -51,12 +52,22 @@ async function handleTailorResumeRequest(request: Request): Promise<Response> {
     return jsonResponse({ error: 'Resume file is required.' }, 400);
   }
 
-  if (typeof jobDescription !== 'string' || !jobDescription.trim()) {
-    return jsonResponse({ error: 'Job description is required.' }, 400);
+  const jobDescriptionResult = tailorRequestSchema.safeParse({
+    jobDescription: typeof jobDescription === 'string' ? jobDescription : '',
+  });
+
+  if (!jobDescriptionResult.success) {
+    const message =
+      jobDescriptionResult.error.issues[0]?.message ??
+      'Job description is required.';
+
+    return jsonResponse({ error: message }, 400);
   }
 
   const resumeText = await extractResumeText(resume);
-  const jobText = await resolveJobDescription(jobDescription.trim());
+  const jobText = await resolveJobDescription(
+    jobDescriptionResult.data.jobDescription,
+  );
   const result = await tailorResumeWithGemini(resumeText, jobText);
 
   return jsonResponse({ data: result });

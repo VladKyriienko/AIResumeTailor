@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createInvalidZipBuffer,
+  createMinimalDocxBuffer,
   INVALID_RESUME_FILE_MESSAGE,
   ResumeFileValidationError,
   validateResumeFile,
@@ -19,8 +21,8 @@ describe('validateResumeFile', () => {
     expect(buffer.length).toBeGreaterThan(0);
   });
 
-  it('accepts a valid DOCX zip signature', async () => {
-    const docxBytes = Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]);
+  it('accepts a valid minimal DOCX', async () => {
+    const docxBytes = createMinimalDocxBuffer();
     const file = createFile(
       'resume.docx',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -28,6 +30,28 @@ describe('validateResumeFile', () => {
     );
 
     await expect(validateResumeFile(file)).resolves.toBeInstanceOf(Buffer);
+  });
+
+  it('rejects ZIP archives without word/document.xml', async () => {
+    const zipBytes = createInvalidZipBuffer();
+    const file = createFile(
+      'resume.docx',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      zipBytes,
+    );
+
+    await expect(validateResumeFile(file)).rejects.toThrow(
+      ResumeFileValidationError,
+    );
+  });
+
+  it('rejects ZIP files with wrong extension and MIME', async () => {
+    const zipBytes = createInvalidZipBuffer();
+    const file = createFile('resume.zip', 'application/zip', zipBytes);
+
+    await expect(validateResumeFile(file)).rejects.toThrow(
+      INVALID_RESUME_FILE_MESSAGE,
+    );
   });
 
   it('accepts plain text files', async () => {

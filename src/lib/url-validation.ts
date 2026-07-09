@@ -4,6 +4,26 @@ import { isIP } from 'node:net';
 export const SSRF_BLOCKED_MESSAGE =
   'This URL cannot be loaded. Paste the job description manually.';
 
+/**
+ * Domain allowlist for vacancy URL fetching.
+ * DNS lookup still runs for allowlisted hosts, but unknown domains are rejected
+ * to reduce DNS rebinding risk. For stricter production hardening, consider
+ * pinned DNS resolution or a custom HTTP agent with fixed resolver endpoints.
+ */
+const ALLOWED_JOB_HOST_SUFFIXES = [
+  'linkedin.com',
+  'djinni.co',
+  'dou.ua',
+  'indeed.com',
+  'glassdoor.com',
+  'greenhouse.io',
+  'lever.co',
+  'workdayjobs.com',
+  'smartrecruiters.com',
+  'workable.com',
+  'ashbyhq.com',
+] as const;
+
 export class UrlValidationError extends Error {
   constructor(message = SSRF_BLOCKED_MESSAGE) {
     super(message);
@@ -40,7 +60,7 @@ function isBlockedIpv4(address: string): boolean {
 }
 
 function expandIpv6(address: string): string[] | null {
-  const normalized = address.toLowerCase();
+  const normalized = address.toLowerCase().trim();
   const [head, tail] = normalized.split('::');
 
   if (normalized.split('::').length > 2) return null;
@@ -62,22 +82,70 @@ function expandIpv6(address: string): string[] | null {
   return parts.map((part) => part.padStart(4, '0'));
 }
 
-function isBlockedIpv6(address: string): boolean {
-  const lower = address.toLowerCase();
+function ipv4FromMappedParts(parts: string[]): string | null {
+  const isZeroPrefix = parts
+    .slice(0, 5)
+    .every((part) => Number.parseInt(part, 16) === 0);
 
-  if (lower === '::1' || lower === '0:0:0:0:0:0:0:1') return true;
+  if (!isZeroPrefix || Number.parseInt(parts[5], 16) !== 0xffff) {
+    return null;
+  }
+
+  const high = Number.parseInt(parts[6], 16);
+  const low = Number.parseInt(parts[7], 16);
+  const ipv4Numeric = (high << 16) | low;
+
+  return [
+    (ipv4Numeric >>> 24) & 0xff,
+    (ipv4Numeric >>> 16) & 0xff,
+    (ipv4Numeric >>> 8) & 0xff,
+    ipv4Numeric & 0xff,
+  ].join('.');
+}
+
+export function normalizeIpv6Address(address: string): string | null {
+  const expanded = expandIpv6(address);
+  if (!expanded) return null;
+  return expanded.map((part) => part.replace(/^0+/, '') || '0').join(':');
+}
+
+function extractMappedIpv4(address: string): string | null {
+  const lower = address.toLowerCase().trim();
 
   if (lower.startsWith('::ffff:')) {
     const mappedIpv4 = lower.slice('::ffff:'.length);
+    if (parseIpv4(mappedIpv4)) return mappedIpv4;
+  }
+
+  const expanded = expandIpv6(lower);
+  if (!expanded) return null;
+
+  return ipv4FromMappedParts(expanded);
+}
+
+export function isBlockedIpv6(address: string): boolean {
+  const lower = address.toLowerCase().trim();
+
+  const mappedIpv4 = extractMappedIpv4(lower);
+  if (mappedIpv4) {
     return isBlockedIpv4(mappedIpv4);
   }
 
   const parts = expandIpv6(lower);
   if (!parts) return false;
 
+  if (parts.every((part) => part === '0000')) return true;
+
+  if (
+    parts.slice(0, 7).every((part) => part === '0000') &&
+    parts[7] === '0001'
+  ) {
+    return true;
+  }
+
   const first = Number.parseInt(parts[0], 16);
 
-  if ((first & 0xff00) === 0xfe80) return true;
+  if ((first & 0xffc0) === 0xfe80) return true;
   if ((first & 0xfe00) === 0xfc00) return true;
 
   return false;
@@ -99,6 +167,14 @@ function isBlockedHostname(hostname: string): boolean {
   if (lower.endsWith('.local')) return true;
 
   return false;
+}
+
+export function isAllowedJobHostname(hostname: string): boolean {
+  const lower = hostname.toLowerCase().replace(/\.$/, '');
+
+  return ALLOWED_JOB_HOST_SUFFIXES.some(
+    (suffix) => lower === suffix || lower.endsWith(`.${suffix}`),
+  );
 }
 
 export async function assertSafeFetchUrl(urlString: string): Promise<URL> {
@@ -125,6 +201,10 @@ export async function assertSafeFetchUrl(urlString: string): Promise<URL> {
       throw new UrlValidationError();
     }
     return url;
+  }
+
+  if (!isAllowedJobHostname(hostname)) {
+    throw new UrlValidationError();
   }
 
   try {

@@ -55,7 +55,7 @@ Open [http://localhost:4321](http://localhost:4321).
 | Word   | `.docx`   | 8 MB     |
 | Text   | `.txt`    | 8 MB     |
 
-Uploads are validated by extension, MIME type, and file signature (magic bytes).
+Uploads are validated by extension, MIME type, file signature (magic bytes), and for DOCX an internal ZIP structure check (`[Content_Types].xml`, `word/document.xml`).
 
 ## Environment variables
 
@@ -70,37 +70,62 @@ See `.env.example` for details.
 
 ## Scripts
 
-| Command                | Description                       |
-| ---------------------- | --------------------------------- |
-| `bun run dev`          | Start dev server                  |
-| `bun run setup`        | Create `.env` from `.env.example` |
-| `bun run build`        | Production build                  |
-| `bun run preview`      | Preview production build          |
-| `bun run check`        | Type-check Astro and Vue files    |
-| `bun run lint`         | Run ESLint                        |
-| `bun run format`       | Format code with Prettier         |
-| `bun run format:check` | Check formatting                  |
-| `bun run test`         | Run tests once                    |
-| `bun run test:watch`   | Run tests in watch mode           |
+| Command                  | Description                       |
+| ------------------------ | --------------------------------- |
+| `bun run dev`            | Start dev server                  |
+| `bun run setup`          | Create `.env` from `.env.example` |
+| `bun run build`          | Production build                  |
+| `bun run preview`        | Preview production build          |
+| `bun run check`          | Type-check Astro and Vue files    |
+| `bun run typecheck:test` | Type-check test files             |
+| `bun run lint`           | Run ESLint                        |
+| `bun run format`         | Format code with Prettier         |
+| `bun run format:check`   | Check formatting                  |
+| `bun run test`           | Run tests once                    |
+| `bun run test:watch`     | Run tests in watch mode           |
 
-## Security notes
+## Security and production notes
 
-- **SSRF protection** — job URL fetching blocks localhost, private/link-local IP ranges, and non-HTTP(S) protocols. Redirect targets are validated the same way.
-- **File validation** — resume uploads are limited to 8 MB and checked by extension, MIME type, and magic bytes.
-- **Error handling** — unexpected server errors return a generic message; technical details are logged server-side only.
-- **No persistence** — resumes are processed in memory for tailoring and are not stored unless you explicitly download the result.
-- **API key** — keep `GEMINI_API_KEY` in server-side env vars only (never expose it to the client).
+### File uploads
+
+- Supported formats: PDF, DOCX, TXT
+- Maximum size: **8 MB**
+- DOCX files must be real Word documents, not arbitrary ZIP archives
+
+### Vacancy URL fetching
+
+Job URLs are fetched server-side with multiple safeguards:
+
+- **Protocol allowlist** — only `http:` and `https:`
+- **IP blocking** — localhost, private, link-local, metadata, and IPv4-mapped IPv6 ranges
+- **Redirect validation** — every redirect target is re-checked
+- **Domain allowlist** — only popular job/careers platforms are allowed:
+  LinkedIn, Djinni, DOU, Indeed, Glassdoor, Greenhouse, Lever, Workday, SmartRecruiters, Workable, Ashby
+
+If a vacancy URL is not on the allowlist, the app returns:
+
+> This URL cannot be loaded. Paste the job description manually.
+
+Paste the job description text directly when a careers page is hosted on a company domain that is not listed above.
+
+**DNS rebinding:** allowlisted domains still go through DNS resolution with post-resolve IP checks. For stricter production hardening, consider pinned DNS resolution or a custom HTTP agent with a fixed resolver.
+
+### Other safeguards
+
+- Unexpected server errors return a generic message; technical details are logged server-side only
+- Resumes are processed in memory and are not stored server-side
+- Keep `GEMINI_API_KEY` in server-side environment variables only
 
 ## Production readiness
 
 This MVP includes:
 
-- SSRF-safe URL fetching with redirect validation
-- Upload validation (size, MIME, magic bytes)
+- SSRF-safe URL fetching with redirect validation and domain allowlist
+- Upload validation (size, MIME, magic bytes, DOCX ZIP structure)
 - Structured Gemini response validation via Zod
 - Cheerio-based HTML extraction for job pages
 - Vitest coverage for core validation and API behavior
-- ESLint, Prettier, and GitHub Actions CI (typecheck, lint, test, build)
+- ESLint, Prettier, and GitHub Actions CI (`check`, `typecheck:test`, lint, test, build)
 
 Before going live, verify your Vercel plan supports the API route duration you need and set production env vars.
 

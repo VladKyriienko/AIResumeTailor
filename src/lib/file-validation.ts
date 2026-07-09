@@ -1,3 +1,5 @@
+import { unzipSync, zipSync } from 'fflate';
+
 export const MAX_RESUME_FILE_SIZE_BYTES = 8 * 1024 * 1024;
 
 export const INVALID_RESUME_FILE_MESSAGE =
@@ -17,6 +19,8 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   txt: 'text/plain',
 };
+
+const DOCX_REQUIRED_ENTRIES = ['[Content_Types].xml', 'word/document.xml'];
 
 function getFileExtension(fileName: string): string {
   return fileName.split('.').pop()?.toLowerCase() ?? '';
@@ -58,12 +62,33 @@ function looksLikePlainText(buffer: Buffer): boolean {
   return suspicious / sample.length < 0.05;
 }
 
+function zipEntryNames(buffer: Buffer): string[] {
+  const archive = unzipSync(new Uint8Array(buffer));
+  return Object.keys(archive);
+}
+
+function hasZipEntry(buffer: Buffer, entryName: string): boolean {
+  return zipEntryNames(buffer).some(
+    (name) => name === entryName || name.endsWith(`/${entryName}`),
+  );
+}
+
+export function isValidDocxBuffer(buffer: Buffer): boolean {
+  if (!hasZipSignature(buffer)) return false;
+
+  try {
+    return DOCX_REQUIRED_ENTRIES.every((entry) => hasZipEntry(buffer, entry));
+  } catch {
+    return false;
+  }
+}
+
 function matchesFileSignature(extension: string, buffer: Buffer): boolean {
   switch (extension) {
     case 'pdf':
       return hasPdfSignature(buffer);
     case 'docx':
-      return hasZipSignature(buffer);
+      return isValidDocxBuffer(buffer);
     case 'txt':
       return looksLikePlainText(buffer);
     default:
@@ -97,4 +122,27 @@ export async function validateResumeFile(file: File): Promise<Buffer> {
   }
 
   return buffer;
+}
+
+export function createMinimalDocxBuffer(): Buffer {
+  const archive = zipSync({
+    '[Content_Types].xml': new TextEncoder().encode(
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+    ),
+    'word/document.xml': new TextEncoder().encode(
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document/>',
+    ),
+  });
+
+  return Buffer.from(archive);
+}
+
+export function createInvalidZipBuffer(): Buffer {
+  const archive = zipSync({
+    '[Content_Types].xml': new TextEncoder().encode(
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+    ),
+  });
+
+  return Buffer.from(archive);
 }
