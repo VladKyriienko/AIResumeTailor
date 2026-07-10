@@ -6,7 +6,6 @@ import { fileURLToPath, URL } from 'node:url';
 export default defineConfig({
   adapter: vercel({
     maxDuration: 60,
-    includeFiles: ['prompts/tailor-resume.prompt'],
   }),
   integrations: [vue()],
   env: {
@@ -16,11 +15,6 @@ export default defineConfig({
         access: 'secret',
       }),
       GEMINI_MODEL: envField.string({
-        context: 'server',
-        access: 'secret',
-        optional: true,
-      }),
-      GEMINI_PROMPT_PATH: envField.string({
         context: 'server',
         access: 'secret',
         optional: true,

@@ -17,8 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "setup:env": "test -f .env && echo '.env already exists — skipped' || (cp .env.example .env && echo 'Created .env — add your GEMINI_API_KEY')",
-    "setup:prompt": "test -f prompts/tailor-resume.prompt && echo 'prompts/tailor-resume.prompt exists' || echo 'Missing prompts/tailor-resume.prompt — create it or set GEMINI_PROMPT in .env'",
-    "setup": "bun run setup:env && bun run setup:prompt",
+    "setup": "bun run setup:env",
     "astro": "astro"
   },
   "dependencies": {

@@ -7,18 +7,10 @@ vi.mock('@/lib/google-docs', () => ({
   readPromptFromGoogleDocs: vi.fn(),
 }));
 
-vi.mock('node:fs/promises', () => ({
-  readFile: vi.fn(),
-}));
-
-vi.mock('../../prompts/tailor-resume.prompt?raw', () => ({
-  default: '',
-}));
-
-import { readFile } from 'node:fs/promises';
 import { readPromptFromGoogleDocs } from '@/lib/google-docs';
 import {
   GeminiApiError,
+  GeminiConfigError,
   GEMINI_MODEL_ROTATION,
   getGeminiModelRotationChain,
   getNextGeminiModelInRotation,
@@ -125,7 +117,6 @@ describe('loadPromptTemplate', () => {
     delete process.env.GEMINI_PROMPT;
     delete process.env.GOOGLE_DOCS_DOCUMENT_ID;
     vi.mocked(readPromptFromGoogleDocs).mockReset();
-    vi.mocked(readFile).mockReset();
     infoSpy.mockClear();
     warnSpy.mockClear();
   });
@@ -151,28 +142,20 @@ describe('loadPromptTemplate', () => {
     expect(readPromptFromGoogleDocs).not.toHaveBeenCalled();
   });
 
-  it('uses Google Docs prompt after GEMINI_PROMPT and before file fallback', async () => {
+  it('uses Google Docs prompt when GEMINI_PROMPT is not set', async () => {
     const docsPrompt = 'docs {{JOB_DESCRIPTION}} {{RESUME_TEXT}}';
     vi.mocked(readPromptFromGoogleDocs).mockResolvedValue(docsPrompt);
 
     await expect(loadPromptTemplate()).resolves.toBe(docsPrompt);
     expect(readPromptFromGoogleDocs).toHaveBeenCalledTimes(1);
-    expect(readFile).not.toHaveBeenCalled();
     expect(infoSpy).toHaveBeenCalledWith(
       expect.stringContaining('[prompt] source=google_docs'),
     );
   });
 
-  it('falls back to file when Google Docs returns null', async () => {
+  it('throws when Google Docs returns null and GEMINI_PROMPT is not set', async () => {
     vi.mocked(readPromptFromGoogleDocs).mockResolvedValue(null);
-    vi.mocked(readFile).mockResolvedValue(
-      'file {{JOB_DESCRIPTION}} {{RESUME_TEXT}}',
-    );
 
-    await expect(loadPromptTemplate()).resolves.toBe(
-      'file {{JOB_DESCRIPTION}} {{RESUME_TEXT}}',
-    );
-    expect(readPromptFromGoogleDocs).toHaveBeenCalledTimes(1);
-    expect(readFile).toHaveBeenCalledTimes(1);
+    await expect(loadPromptTemplate()).rejects.toThrow(GeminiConfigError);
   });
 });

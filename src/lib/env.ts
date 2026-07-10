@@ -2,7 +2,6 @@ import {
   GEMINI_API_KEY,
   GEMINI_MODEL,
   GEMINI_PROMPT,
-  GEMINI_PROMPT_PATH,
   GOOGLE_DOCS_DOCUMENT_ID,
   GOOGLE_SERVICE_ACCOUNT_EMAIL,
   GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
@@ -28,11 +27,6 @@ export function readServerEnv(name: string): string | undefined {
       return (
         emptyToUndefined(GEMINI_PROMPT) ??
         emptyToUndefined(process.env.GEMINI_PROMPT)
-      );
-    case 'GEMINI_PROMPT_PATH':
-      return (
-        emptyToUndefined(GEMINI_PROMPT_PATH) ??
-        emptyToUndefined(process.env.GEMINI_PROMPT_PATH)
       );
     case 'GOOGLE_DOCS_DOCUMENT_ID':
       return (

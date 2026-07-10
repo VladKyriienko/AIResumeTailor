@@ -21,15 +21,13 @@ bun run setup
 
 This creates `.env` from `.env.example` (skips if it already exists).
 
-Add your Gemini API key to `.env`:
+Add your Gemini API key and Google Docs prompt settings to `.env` (see [Prompt from Google Docs](#prompt-from-google-docs)).
 
 ```bash
 GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
-The prompt lives in `prompts/tailor-resume.prompt` (committed to git). Edit it locally and use `{{JOB_DESCRIPTION}}` and `{{RESUME_TEXT}}` placeholders where dynamic content should be inserted.
-
-For production (e.g. Vercel), you can override the file via the `GEMINI_PROMPT` environment variable, load it from **Google Docs** (see [Prompt from Google Docs](#prompt-from-google-docs)), or use `GEMINI_PROMPT_PATH`. Priority: `GEMINI_PROMPT` → Google Docs → bundled file → `GEMINI_PROMPT_PATH`.
+The Gemini prompt is loaded from a **Google Doc** at runtime. The document must include `{{JOB_DESCRIPTION}}` and `{{RESUME_TEXT}}` placeholders. Optionally set `GEMINI_PROMPT` in env as an emergency override.
 
 Start the dev server:
 
@@ -59,23 +57,20 @@ Uploads are validated by extension, MIME type, file signature (magic bytes), and
 
 ## Environment variables
 
-| Variable             | Required | Description                                                         |
-| -------------------- | -------- | ------------------------------------------------------------------- |
-| `GEMINI_API_KEY`     | Yes      | API key from [Google AI Studio](https://aistudio.google.com/apikey) |
-| `GEMINI_MODEL`       | No       | Model id (default `gemini-2.0-flash`)                               |
-| `GEMINI_PROMPT`      | No       | Full prompt text; overrides the file                                |
-| `GEMINI_PROMPT_PATH` | No       | Path to prompt file (default `prompts/tailor-resume.prompt`)        |
+| Variable         | Required | Description                                                         |
+| ---------------- | -------- | ------------------------------------------------------------------- |
+| `GEMINI_API_KEY` | Yes      | API key from [Google AI Studio](https://aistudio.google.com/apikey) |
+| `GEMINI_MODEL`   | No       | Model id (default `gemini-2.0-flash`)                               |
+| `GEMINI_PROMPT`  | No       | Emergency prompt override; skips Google Docs                        |
 
 See `.env.example` for details.
 
 ### Prompt from Google Docs
 
-You can load the Gemini prompt from a Google Doc so it can be edited without redeploying the app. Priority order:
+The Gemini prompt is loaded from a Google Doc so it can be edited without redeploying the app. Priority order:
 
 1. `GEMINI_PROMPT` — emergency override (highest priority)
 2. Google Docs document
-3. Bundled `prompts/tailor-resume.prompt`
-4. `GEMINI_PROMPT_PATH` / local file
 
 The document must include `{{JOB_DESCRIPTION}}` and `{{RESUME_TEXT}}` placeholders.
 
@@ -191,8 +186,8 @@ Before going live, verify your Vercel plan supports the API route duration you n
 4. Add **Environment Variables** (Production + Preview):
    - `GEMINI_API_KEY` — required
    - `GEMINI_MODEL` — optional (default `gemini-2.0-flash`; avoid slow models on Hobby/10s limit)
-   - `GEMINI_PROMPT` — optional; overrides Google Docs and bundled prompt
-   - `GOOGLE_DOCS_DOCUMENT_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` — optional; load prompt from Google Docs (see [Prompt from Google Docs](#prompt-from-google-docs))
+   - `GEMINI_PROMPT` — optional emergency override
+   - `GOOGLE_DOCS_DOCUMENT_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` — required for prompt loading (see [Prompt from Google Docs](#prompt-from-google-docs))
 5. Deploy.
 
 The app uses `@astrojs/vercel` with `maxDuration: 60` for the tailor API (requires Vercel Pro for 60s; Hobby limit is 10s).
@@ -200,14 +195,12 @@ The app uses `@astrojs/vercel` with `maxDuration: 60` for the tailor API (requir
 ## Project structure
 
 ```
-prompts/
-  tailor-resume.prompt  # Gemini prompt (committed to git)
 src/
   components/   # Vue islands
   layouts/      # Page layouts
   lib/
     gemini.ts           # Gemini API + env + prompt loading
-    google-docs.ts      # Optional Google Docs prompt source
+    google-docs.ts      # Google Docs prompt source
     resume.ts           # Resume extraction + PDF export
     job-description.ts  # URL detection + job text fetching
     url-validation.ts   # SSRF protection for URL fetching

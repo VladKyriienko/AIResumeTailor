@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
 import {
   GoogleGenerativeAI,
   SchemaType,
@@ -9,7 +7,6 @@ import type { TailorResult } from '@/types';
 import { readServerEnv } from '@/lib/env';
 import { readPromptFromGoogleDocs } from '@/lib/google-docs';
 import { tailorResultSchema } from '@/lib/schemas';
-import bundledPrompt from '../../prompts/tailor-resume.prompt?raw';
 
 const PLACEHOLDER_API_KEY = 'your_gemini_api_key_here';
 const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite';
@@ -23,7 +20,6 @@ export const GEMINI_MODEL_ROTATION = [
   'gemini-2.5-flash',
   'gemini-2.5-flash-lite',
 ] as const;
-const DEFAULT_PROMPT_FILE = 'prompts/tailor-resume.prompt';
 const JOB_DESCRIPTION_PLACEHOLDER = '{{JOB_DESCRIPTION}}';
 const RESUME_TEXT_PLACEHOLDER = '{{RESUME_TEXT}}';
 const GEMINI_REQUEST_TIMEOUT_MS = 55_000;
@@ -176,18 +172,6 @@ function buildAllModelsFailedError(lastError: unknown): GeminiApiError {
   return toGeminiApiError(lastError);
 }
 
-function resolvePromptPath(): string {
-  const configuredPath = readEnv('GEMINI_PROMPT_PATH');
-
-  if (configuredPath) {
-    return isAbsolute(configuredPath)
-      ? configuredPath
-      : join(process.cwd(), configuredPath);
-  }
-
-  return join(process.cwd(), DEFAULT_PROMPT_FILE);
-}
-
 function validatePromptTemplate(template: string): void {
   if (
     !template.includes(JOB_DESCRIPTION_PLACEHOLDER) ||
@@ -214,7 +198,7 @@ function truncateText(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}\n\n[Truncated for length]`;
 }
 
-type PromptSource = 'env:gemini_prompt' | 'google_docs' | 'bundled' | 'file';
+type PromptSource = 'env:gemini_prompt' | 'google_docs';
 
 function logPromptSource(
   source: PromptSource,
@@ -251,31 +235,12 @@ export async function loadPromptTemplate(): Promise<string> {
   }
 
   if (readEnv('GOOGLE_DOCS_DOCUMENT_ID')) {
-    console.warn(
-      '[prompt] Google Docs configured but no prompt loaded; using fallback',
-    );
+    console.warn('[prompt] Google Docs configured but no prompt loaded.');
   }
 
-  if (bundledPrompt.trim()) {
-    logPromptSource(
-      'bundled',
-      bundledPrompt,
-      'path=prompts/tailor-resume.prompt',
-    );
-    return bundledPrompt;
-  }
-
-  const promptPath = resolvePromptPath();
-
-  try {
-    const fromFile = await readFile(promptPath, 'utf-8');
-    logPromptSource('file', fromFile, `path=${promptPath}`);
-    return fromFile;
-  } catch {
-    throw new GeminiConfigError(
-      `Prompt not found at ${promptPath}. Set GEMINI_PROMPT in env or create the prompt file.`,
-    );
-  }
+  throw new GeminiConfigError(
+    'Prompt not found. Configure Google Docs (GOOGLE_DOCS_DOCUMENT_ID, service account) or set GEMINI_PROMPT in env.',
+  );
 }
 
 async function loadTailorPrompt(
