@@ -3,6 +3,9 @@ import {
   GEMINI_MODEL,
   GEMINI_PROMPT,
   GEMINI_PROMPT_PATH,
+  GOOGLE_DOCS_DOCUMENT_ID,
+  GOOGLE_SERVICE_ACCOUNT_EMAIL,
+  GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY,
 } from 'astro:env/server';
 
 function emptyToUndefined(value: string | undefined): string | undefined {
@@ -30,6 +33,21 @@ export function readServerEnv(name: string): string | undefined {
       return (
         emptyToUndefined(GEMINI_PROMPT_PATH) ??
         emptyToUndefined(process.env.GEMINI_PROMPT_PATH)
+      );
+    case 'GOOGLE_DOCS_DOCUMENT_ID':
+      return (
+        emptyToUndefined(GOOGLE_DOCS_DOCUMENT_ID) ??
+        emptyToUndefined(process.env.GOOGLE_DOCS_DOCUMENT_ID)
+      );
+    case 'GOOGLE_SERVICE_ACCOUNT_EMAIL':
+      return (
+        emptyToUndefined(GOOGLE_SERVICE_ACCOUNT_EMAIL) ??
+        emptyToUndefined(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL)
+      );
+    case 'GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY':
+      return (
+        emptyToUndefined(GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) ??
+        emptyToUndefined(process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY)
       );
     default:
       return emptyToUndefined(process.env[name]);

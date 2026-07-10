@@ -1,9 +1,28 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+vi.mock('@/lib/google-docs', () => ({
+  readPromptFromGoogleDocs: vi.fn(),
+}));
+
+vi.mock('node:fs/promises', () => ({
+  readFile: vi.fn(),
+}));
+
+vi.mock('../../prompts/tailor-resume.prompt?raw', () => ({
+  default: '',
+}));
+
+import { readFile } from 'node:fs/promises';
+import { readPromptFromGoogleDocs } from '@/lib/google-docs';
 import {
   GeminiApiError,
   GEMINI_MODEL_ROTATION,
   getGeminiModelRotationChain,
   getNextGeminiModelInRotation,
+  loadPromptTemplate,
   parseTailorResult,
 } from './gemini';
 
@@ -96,5 +115,64 @@ describe('parseTailorResult', () => {
       expect(error).toBeInstanceOf(GeminiApiError);
       expect((error as GeminiApiError).status).toBe(502);
     }
+  });
+});
+
+describe('loadPromptTemplate', () => {
+  const previousGeminiPrompt = process.env.GEMINI_PROMPT;
+
+  beforeEach(() => {
+    delete process.env.GEMINI_PROMPT;
+    delete process.env.GOOGLE_DOCS_DOCUMENT_ID;
+    vi.mocked(readPromptFromGoogleDocs).mockReset();
+    vi.mocked(readFile).mockReset();
+    infoSpy.mockClear();
+    warnSpy.mockClear();
+  });
+
+  afterEach(() => {
+    if (previousGeminiPrompt === undefined) {
+      delete process.env.GEMINI_PROMPT;
+    } else {
+      process.env.GEMINI_PROMPT = previousGeminiPrompt;
+    }
+  });
+
+  it('uses GEMINI_PROMPT before Google Docs', async () => {
+    process.env.GEMINI_PROMPT =
+      'env prompt {{JOB_DESCRIPTION}} {{RESUME_TEXT}}';
+    vi.mocked(readPromptFromGoogleDocs).mockResolvedValue(
+      'docs {{JOB_DESCRIPTION}} {{RESUME_TEXT}}',
+    );
+
+    await expect(loadPromptTemplate()).resolves.toBe(
+      'env prompt {{JOB_DESCRIPTION}} {{RESUME_TEXT}}',
+    );
+    expect(readPromptFromGoogleDocs).not.toHaveBeenCalled();
+  });
+
+  it('uses Google Docs prompt after GEMINI_PROMPT and before file fallback', async () => {
+    const docsPrompt = 'docs {{JOB_DESCRIPTION}} {{RESUME_TEXT}}';
+    vi.mocked(readPromptFromGoogleDocs).mockResolvedValue(docsPrompt);
+
+    await expect(loadPromptTemplate()).resolves.toBe(docsPrompt);
+    expect(readPromptFromGoogleDocs).toHaveBeenCalledTimes(1);
+    expect(readFile).not.toHaveBeenCalled();
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[prompt] source=google_docs'),
+    );
+  });
+
+  it('falls back to file when Google Docs returns null', async () => {
+    vi.mocked(readPromptFromGoogleDocs).mockResolvedValue(null);
+    vi.mocked(readFile).mockResolvedValue(
+      'file {{JOB_DESCRIPTION}} {{RESUME_TEXT}}',
+    );
+
+    await expect(loadPromptTemplate()).resolves.toBe(
+      'file {{JOB_DESCRIPTION}} {{RESUME_TEXT}}',
+    );
+    expect(readPromptFromGoogleDocs).toHaveBeenCalledTimes(1);
+    expect(readFile).toHaveBeenCalledTimes(1);
   });
 });

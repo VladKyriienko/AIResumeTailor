@@ -29,7 +29,7 @@ GEMINI_API_KEY=your_gemini_api_key_here
 
 The prompt lives in `prompts/tailor-resume.prompt` (committed to git). Edit it locally and use `{{JOB_DESCRIPTION}}` and `{{RESUME_TEXT}}` placeholders where dynamic content should be inserted.
 
-For production (e.g. Vercel), you can override the file via the `GEMINI_PROMPT` environment variable. `GEMINI_PROMPT` takes priority over `GEMINI_PROMPT_PATH`.
+For production (e.g. Vercel), you can override the file via the `GEMINI_PROMPT` environment variable, load it from **Google Docs** (see [Prompt from Google Docs](#prompt-from-google-docs)), or use `GEMINI_PROMPT_PATH`. Priority: `GEMINI_PROMPT` → Google Docs → bundled file → `GEMINI_PROMPT_PATH`.
 
 Start the dev server:
 
@@ -67,6 +67,60 @@ Uploads are validated by extension, MIME type, file signature (magic bytes), and
 | `GEMINI_PROMPT_PATH` | No       | Path to prompt file (default `prompts/tailor-resume.prompt`)        |
 
 See `.env.example` for details.
+
+### Prompt from Google Docs
+
+You can load the Gemini prompt from a Google Doc so it can be edited without redeploying the app. Priority order:
+
+1. `GEMINI_PROMPT` — emergency override (highest priority)
+2. Google Docs document
+3. Bundled `prompts/tailor-resume.prompt`
+4. `GEMINI_PROMPT_PATH` / local file
+
+The document must include `{{JOB_DESCRIPTION}}` and `{{RESUME_TEXT}}` placeholders.
+
+#### 1. Enable Google Docs API
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/).
+2. Select your project (or create one).
+3. Go to **APIs & Services → Library**.
+4. Search for **Google Docs API** and click **Enable**.
+
+#### 2. Create a service account
+
+1. Go to **APIs & Services → Credentials**.
+2. Click **Create credentials → Service account**.
+3. Create the account and open it → **Keys → Add key → Create new key → JSON**.
+4. Save the JSON file locally — **do not commit it to git**.
+5. From the JSON, copy:
+   - `client_email` → `GOOGLE_SERVICE_ACCOUNT_EMAIL`
+   - `private_key` → `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` (paste as one line; `\n` escapes are supported)
+
+#### 3. Share the Google Doc
+
+1. Open your document in Google Docs.
+2. Click **Share**.
+3. Add the service account email (`...@...iam.gserviceaccount.com`) as **Viewer**.
+
+#### 4. Find the document ID
+
+From the document URL:
+
+`https://docs.google.com/document/d/DOCUMENT_ID/edit`
+
+Copy the `DOCUMENT_ID` segment into `GOOGLE_DOCS_DOCUMENT_ID`.
+
+#### 5. Configure environment variables
+
+Add to `.env` locally or in Vercel (**Environment Variables** for Production + Preview):
+
+| Variable                             | Description                                           |
+| ------------------------------------ | ----------------------------------------------------- |
+| `GOOGLE_DOCS_DOCUMENT_ID`            | Document ID from the URL                              |
+| `GOOGLE_SERVICE_ACCOUNT_EMAIL`       | Service account `client_email`                        |
+| `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` | Service account `private_key` (supports escaped `\n`) |
+
+`GEMINI_PROMPT` still wins if set — useful for a quick override without changing the document.
 
 ## Scripts
 
@@ -137,7 +191,8 @@ Before going live, verify your Vercel plan supports the API route duration you n
 4. Add **Environment Variables** (Production + Preview):
    - `GEMINI_API_KEY` — required
    - `GEMINI_MODEL` — optional (default `gemini-2.0-flash`; avoid slow models on Hobby/10s limit)
-   - `GEMINI_PROMPT` — optional; overrides `prompts/tailor-resume.prompt`
+   - `GEMINI_PROMPT` — optional; overrides Google Docs and bundled prompt
+   - `GOOGLE_DOCS_DOCUMENT_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` — optional; load prompt from Google Docs (see [Prompt from Google Docs](#prompt-from-google-docs))
 5. Deploy.
 
 The app uses `@astrojs/vercel` with `maxDuration: 60` for the tailor API (requires Vercel Pro for 60s; Hobby limit is 10s).
@@ -152,6 +207,7 @@ src/
   layouts/      # Page layouts
   lib/
     gemini.ts           # Gemini API + env + prompt loading
+    google-docs.ts      # Optional Google Docs prompt source
     resume.ts           # Resume extraction + PDF export
     job-description.ts  # URL detection + job text fetching
     url-validation.ts   # SSRF protection for URL fetching

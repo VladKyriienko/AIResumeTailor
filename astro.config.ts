@@ -30,15 +30,28 @@ export default defineConfig({
         access: 'secret',
         optional: true,
       }),
+      GOOGLE_DOCS_DOCUMENT_ID: envField.string({
+        context: 'server',
+        access: 'secret',
+        optional: true,
+      }),
+      GOOGLE_SERVICE_ACCOUNT_EMAIL: envField.string({
+        context: 'server',
+        access: 'secret',
+        optional: true,
+      }),
+      GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: envField.string({
+        context: 'server',
+        access: 'secret',
+        optional: true,
+      }),
     },
     validateSecrets: true,
   },
   vite: {
     resolve: {
       alias: {
-        '@': fileURLToPath(
-          new URL('./src', import.meta.url),
-        ),
+        '@': fileURLToPath(new URL('./src', import.meta.url)),
       },
     },
   },

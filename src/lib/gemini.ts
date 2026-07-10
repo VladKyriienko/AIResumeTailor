@@ -7,6 +7,7 @@ import {
 } from '@google/generative-ai';
 import type { TailorResult } from '@/types';
 import { readServerEnv } from '@/lib/env';
+import { readPromptFromGoogleDocs } from '@/lib/google-docs';
 import { tailorResultSchema } from '@/lib/schemas';
 import bundledPrompt from '../../prompts/tailor-resume.prompt?raw';
 
@@ -213,18 +214,63 @@ function truncateText(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}\n\n[Truncated for length]`;
 }
 
-async function loadPromptTemplate(): Promise<string> {
+type PromptSource = 'env:gemini_prompt' | 'google_docs' | 'bundled' | 'file';
+
+function logPromptSource(
+  source: PromptSource,
+  template: string,
+  detail?: string,
+): void {
+  const message = [
+    `[prompt] source=${source}`,
+    `length=${template.length}`,
+    detail,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  console.info(message);
+}
+
+export async function loadPromptTemplate(): Promise<string> {
   const fromEnv = readEnv('GEMINI_PROMPT')?.trim();
-  if (fromEnv) return fromEnv;
+  if (fromEnv) {
+    logPromptSource('env:gemini_prompt', fromEnv);
+    return fromEnv;
+  }
+
+  const fromDocs = (await readPromptFromGoogleDocs())?.trim();
+  if (fromDocs) {
+    const documentId = readEnv('GOOGLE_DOCS_DOCUMENT_ID');
+    logPromptSource(
+      'google_docs',
+      fromDocs,
+      documentId ? `documentId=${documentId}` : undefined,
+    );
+    return fromDocs;
+  }
+
+  if (readEnv('GOOGLE_DOCS_DOCUMENT_ID')) {
+    console.warn(
+      '[prompt] Google Docs configured but no prompt loaded; using fallback',
+    );
+  }
 
   if (bundledPrompt.trim()) {
+    logPromptSource(
+      'bundled',
+      bundledPrompt,
+      'path=prompts/tailor-resume.prompt',
+    );
     return bundledPrompt;
   }
 
   const promptPath = resolvePromptPath();
 
   try {
-    return await readFile(promptPath, 'utf-8');
+    const fromFile = await readFile(promptPath, 'utf-8');
+    logPromptSource('file', fromFile, `path=${promptPath}`);
+    return fromFile;
   } catch {
     throw new GeminiConfigError(
       `Prompt not found at ${promptPath}. Set GEMINI_PROMPT in env or create the prompt file.`,
